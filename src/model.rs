@@ -84,7 +84,16 @@ impl Device {
             State::Unavailable => "Заряд недоступен".into(),
             State::PermissionDenied => "Нужны права доступа".into(),
         };
-        format!("{value}{}{}", if self.charging == Some(true) { " · зарядка" } else { "" }, if self.state == State::Stale { " · устарело" } else { "" })
+        let status = if self.charging == Some(true) {
+            " · зарядка"
+        } else if self.state == State::Stale {
+            " · устарело"
+        } else if self.percent.is_some() && self.is_low_battery() {
+            " · низкий заряд"
+        } else {
+            ""
+        };
+        format!("{value}{status}")
     }
 }
 
