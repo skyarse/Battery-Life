@@ -12,6 +12,17 @@ pub struct Reading {
     pub approximate: bool,
 }
 
+#[derive(Debug)]
+pub struct DeviceOffline(&'static str);
+
+impl std::fmt::Display for DeviceOffline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for DeviceOffline {}
+
 pub fn compx_packet(command: u8) -> [u8; 17] {
     let mut p = [0; 17];
     p[0] = 8;
@@ -62,7 +73,7 @@ fn parse_mchose(report: &[u8]) -> Result<Reading> {
             charging: Some(true),
             approximate: false,
         }),
-        0x1a => bail!("Приёмник сообщает, что наушники выключены"),
+        0x1a => Err(DeviceOffline("Приёмник сообщает, что наушники выключены").into()),
         _ => bail!("Неизвестный ответ MCHOSE о батарее (уровень {percent}, статус {status:#04x})"),
     }
 }
@@ -119,7 +130,9 @@ pub fn zaopin(dev: &HidDevice, product_id: u16) -> Result<Reading> {
     write(dev, &compx_packet(3)).context("Compx, запрос связи 0x03")?;
     let online = response(dev, Duration::from_millis(600), |p| compx_valid(p, 3) && p[5] >= 1)
         .with_context(|| format!("Compx, ответ о связи 0x03 (CID {cid}, MID {mid})"))?;
-    if online[6] == 0 { bail!("Мышь спит или отключена от приёмника (CID {cid}, MID {mid})"); }
+    if online[6] == 0 {
+        return Err(DeviceOffline("Мышь спит или отключена от приёмника").into());
+    }
     std::thread::sleep(Duration::from_millis(10));
     write(dev, &compx_packet(4)).context("Compx, запрос заряда 0x04")?;
     let p = response(dev, Duration::from_millis(600), |p| parse_compx(p).is_some())
@@ -209,7 +222,8 @@ mod tests {
             assert_eq!(charging.charging, Some(true));
             assert_eq!(charging.percent, None);
         }
-        assert!(parse_mchose(&[0x55, 0x65, 0, 0x1a]).is_err());
+        let offline = parse_mchose(&[0x55, 0x65, 0, 0x1a]).unwrap_err();
+        assert!(offline.is::<DeviceOffline>());
         assert!(parse_mchose(&[0x55, 0x65, 101, 0x02]).is_err());
     }
     #[test]

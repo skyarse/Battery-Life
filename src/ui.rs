@@ -86,7 +86,7 @@ pub fn create(shared: Arc<Mutex<Snapshot>>, tx: mpsc::Sender<Command>) -> anyhow
 
 pub fn update(window: &DetailsWindow, shared: &Arc<Mutex<Snapshot>>) {
     let Ok(s) = shared.lock() else { return; };
-    let rows: Vec<_> = s.detected_devices().map(|d| DeviceRow {
+    let rows: Vec<_> = s.visible_devices().map(|d| DeviceRow {
         name: d.name.as_str().into(), value: d.label().into(), detail: d.detail.as_str().into(),
         source: if let Some(reading_time) = d.reading_time() {
             format!("{} · {reading_time}", d.source)
@@ -94,7 +94,8 @@ pub fn update(window: &DetailsWindow, shared: &Arc<Mutex<Snapshot>>) {
             d.source.clone()
         }.into(),
         percent: d.percent.unwrap_or_default() as f32,
-        has_percent: d.percent.is_some(), stale: d.state == crate::model::State::Stale,
+        has_percent: d.percent.is_some(),
+        stale: matches!(d.state, crate::model::State::Stale | crate::model::State::Offline),
     }).collect();
     window.set_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
     let status = if s.warnings.is_empty() { "Автообновление каждые 30 секунд. Недоступный заряд не означает 0%.".into() } else { format!("Автообновление: 30 с. {}", s.warnings.join(" · ")) };

@@ -1,4 +1,5 @@
 mod hardware;
+mod history;
 mod model;
 mod notifications;
 mod protocols;
@@ -6,6 +7,7 @@ mod system;
 mod ui;
 
 use anyhow::{Context, Result};
+use history::DeviceHistory;
 use ksni::{MenuItem, Tray, blocking::{Handle, TrayMethods}, menu::{StandardItem, SubMenu}};
 use model::{Device, State};
 use notifications::LowBatteryAlerts;
@@ -26,7 +28,7 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    fn detected_devices(&self) -> impl Iterator<Item = &Device> {
+    fn visible_devices(&self) -> impl Iterator<Item = &Device> {
         self.devices.iter().filter(|device| device.state != State::Missing)
     }
 }
@@ -57,7 +59,7 @@ impl Tray for BatteryTray {
         } else { "battery-good-symbolic" }.into()
     }
     fn tool_tip(&self) -> ksni::ToolTip {
-        let description = self.snapshot.detected_devices()
+        let description = self.snapshot.visible_devices()
             .map(|device| format!("{}: {}", device.name, device.label()))
             .collect::<Vec<_>>()
             .join("\n");
@@ -70,7 +72,7 @@ impl Tray for BatteryTray {
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let mut menu = vec![menu_text("Устройство\tЗаряд")];
         menu.push(MenuItem::Separator);
-        let mut devices = self.snapshot.detected_devices().peekable();
+        let mut devices = self.snapshot.visible_devices().peekable();
         if devices.peek().is_none() {
             menu.push(menu_text(NO_DEVICES));
         }
@@ -170,13 +172,24 @@ fn monitor(
     session: Connection,
     on_update: impl Fn(&Snapshot),
 ) {
-    let mut previous = Vec::new();
+    let history_path = history::state_path();
+    let mut history = history_path.as_deref().map(DeviceHistory::load)
+        .transpose().unwrap_or_else(|error| {
+            eprintln!("Battery Life: не удалось прочитать историю заряда: {error:#}");
+            None
+        }).unwrap_or_default();
+    let mut history_dirty = false;
     let mut alerts = LowBatteryAlerts::default();
     loop {
         let mut snapshot = scan();
-        model::retain_recent(&mut snapshot.devices, &previous, snapshot.checked_at);
+        history_dirty |= history.update(&mut snapshot.devices);
+        if let Some(path) = history_path.as_deref().filter(|_| history_dirty) {
+            match history.save(path) {
+                Ok(()) => history_dirty = false,
+                Err(error) => snapshot.warnings.push(format!("Не удалось сохранить историю заряда: {error:#}")),
+            }
+        }
         alerts.update(&snapshot.devices, &session);
-        previous = snapshot.devices.clone();
         on_update(&snapshot);
         if handle.update(|tray| tray.snapshot = snapshot).is_none() {
             return;

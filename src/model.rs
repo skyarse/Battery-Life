@@ -12,6 +12,7 @@ pub enum State {
     PermissionDenied,
     Ready,
     Stale,
+    Offline,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -75,7 +76,8 @@ impl Device {
             return "Заряжается".into();
         }
         let value = match self.state {
-            State::Ready | State::Stale => {
+            State::Offline if self.percent.is_none() && self.level.is_none() => return "Отключено".into(),
+            State::Ready | State::Stale | State::Offline => {
                 if let Some(p) = self.percent {
                     format!("{}{p}%", if self.approximate { "≈" } else { "" })
                 } else { self.level.clone().unwrap_or_else(|| "Нет данных".into()) }
@@ -84,7 +86,9 @@ impl Device {
             State::Unavailable => "Заряд недоступен".into(),
             State::PermissionDenied => "Нужны права доступа".into(),
         };
-        let status = if self.charging == Some(true) {
+        let status = if self.state == State::Offline {
+            " · отключено"
+        } else if self.charging == Some(true) {
             " · зарядка"
         } else if self.state == State::Stale {
             " · устарело"
@@ -119,65 +123,9 @@ pub fn identify(name: &str) -> Option<&'static str> {
     else { None }
 }
 
-/// An unsuccessful refresh never presents a previous value as a fresh measurement.
-pub fn retain_recent(rows: &mut [Device], previous: &[Device], timestamp: u64) {
-    for row in rows {
-        if matches!(row.state, State::Ready | State::Missing) { continue; }
-        if let Some(old) = previous.iter().find(|p| {
-            p.id == row.id && (p.percent.is_some() || p.level.is_some())
-                && p.updated_at.is_some_and(|t| timestamp.saturating_sub(t) <= 300)
-        }) {
-            let reason = row.detail.clone();
-            row.percent = old.percent;
-            row.level = old.level.clone();
-            row.approximate = old.approximate;
-            row.updated_at = old.updated_at;
-            row.charging = None;
-            row.source = old.source.clone();
-            row.state = State::Stale;
-            row.detail = format!("Последние данные, не текущее измерение. {reason}");
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn charging_without_a_level_is_visible_but_not_cached_as_a_level() {
-        let mut old = expected();
-        old[4].reading(None, None, Some(true), false, "USB HID · MCHOSE");
-        old[4].updated_at = Some(100);
-        assert_eq!(old[4].label(), "Заряжается");
-        assert_eq!(old[4].state, State::Ready);
-
-        let mut rows = expected();
-        rows[4].state = State::Unavailable;
-        retain_recent(&mut rows, &old, 110);
-        assert_eq!(rows[4].state, State::Unavailable);
-        assert_eq!(rows[4].percent, None);
-    }
-    #[test]
-    fn expired_and_failed_readings_do_not_turn_into_zero() {
-        let mut old = expected();
-        old[0].reading(Some(73), None, Some(true), false, "test");
-        old[0].updated_at = Some(100);
-        let mut rows = expected();
-        rows[0].state = State::Unavailable;
-        retain_recent(&mut rows, &old, 110);
-        assert_eq!(rows[0].state, State::Stale);
-        assert_eq!(rows[0].percent, Some(73));
-        assert_eq!(rows[0].charging, None);
-        assert!(rows[0].label().contains("устарело"));
-        let mut rows = expected();
-        retain_recent(&mut rows, &old, 110);
-        assert_eq!(rows[0].percent, None);
-        assert_eq!(rows[0].state, State::Missing);
-        rows[0].state = State::Unavailable;
-        retain_recent(&mut rows, &old, 401);
-        assert_eq!(rows[0].percent, None);
-        assert_eq!(rows[0].state, State::Unavailable);
-    }
     #[test]
     fn unknown_keyboard_is_not_misidentified_as_ciy() {
         assert_eq!(identify("MonsGeek Keyboard"), None);
