@@ -1,5 +1,6 @@
 mod hardware;
 mod model;
+mod notifications;
 mod protocols;
 mod system;
 mod ui;
@@ -7,9 +8,11 @@ mod ui;
 use anyhow::{Context, Result};
 use ksni::{MenuItem, Tray, blocking::{Handle, TrayMethods}, menu::{StandardItem, SubMenu}};
 use model::{Device, State};
+use notifications::LowBatteryAlerts;
 use serde::Serialize;
 use slint::ComponentHandle;
 use std::{sync::{Arc, Mutex, mpsc}, time::Duration};
+use zbus::blocking::{Connection, connection::Builder};
 
 const RULES: &str = include_str!("../packaging/70-battery-life.rules");
 const NO_DEVICES: &str = "Устройства не обнаружены";
@@ -49,7 +52,7 @@ impl Tray for BatteryTray {
     fn id(&self) -> String { "battery-life".into() }
     fn title(&self) -> String { "Battery Life".into() }
     fn icon_name(&self) -> String {
-        if self.snapshot.devices.iter().any(|d| d.state == State::Ready && (d.percent.is_some_and(|p| p <= 15) || d.level.as_deref() == Some("Критический") || d.level.as_deref() == Some("Низкий"))) {
+        if self.snapshot.devices.iter().any(Device::is_low_battery) {
             "battery-caution-symbolic"
         } else { "battery-good-symbolic" }.into()
     }
@@ -65,7 +68,7 @@ impl Tray for BatteryTray {
         }
     }
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let mut menu = vec![menu_text("Беспроводные устройства")];
+        let mut menu = vec![menu_text("Устройство\tЗаряд")];
         menu.push(MenuItem::Separator);
         let mut devices = self.snapshot.detected_devices().peekable();
         if devices.peek().is_none() {
@@ -80,7 +83,8 @@ impl Tray for BatteryTray {
                 details.push(menu_text(format!("Последний ответ · {reading_time}")));
             }
             menu.push(SubMenu {
-                label: format!("{} — {}", device.name, device.label()),
+                // KDE's Qt menu renders text after a tab in its right-hand column.
+                label: format!("{}\t{}", device.name, device.label()),
                 submenu: details,
                 ..Default::default()
             }.into());
@@ -126,7 +130,9 @@ fn run() -> Result<()> {
         return Ok(());
     }
     anyhow::ensure!(std::env::var_os("WAYLAND_DISPLAY").is_some(), "Нужен сеанс Wayland. Для диагностики без GUI используйте --diagnose");
-    let instance = zbus::blocking::Connection::session().context("Не удалось подключиться к D-Bus сеанса")?;
+    let instance = Builder::session()
+        .and_then(|builder| builder.method_timeout(Duration::from_secs(3)).build())
+        .context("Не удалось подключиться к D-Bus сеанса")?;
     instance.request_name("io.github.skyarse.BatteryLife").context("Приложение уже запущено или имя D-Bus недоступно")?;
 
     let (tx, rx) = mpsc::channel();
@@ -135,7 +141,7 @@ fn run() -> Result<()> {
         .spawn()
         .context("Не удалось создать значок в трее KDE")?;
     if !args.iter().any(|a| a == "--window") {
-        monitor(handle, rx, |_| {});
+        monitor(handle, rx, instance, |_| {});
         return Ok(());
     }
 
@@ -144,7 +150,7 @@ fn run() -> Result<()> {
     window.show()?;
     let weak = window.as_weak();
     std::thread::spawn(move || {
-        monitor(handle, rx, |snapshot| {
+        monitor(handle, rx, instance, |snapshot| {
             if let Ok(mut current) = shared.lock() { *current = snapshot.clone(); }
             let weak_update = weak.clone();
             let shared_update = shared.clone();
@@ -158,11 +164,18 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn monitor(handle: Handle<BatteryTray>, rx: mpsc::Receiver<Command>, on_update: impl Fn(&Snapshot)) {
+fn monitor(
+    handle: Handle<BatteryTray>,
+    rx: mpsc::Receiver<Command>,
+    session: Connection,
+    on_update: impl Fn(&Snapshot),
+) {
     let mut previous = Vec::new();
+    let mut alerts = LowBatteryAlerts::default();
     loop {
         let mut snapshot = scan();
         model::retain_recent(&mut snapshot.devices, &previous, snapshot.checked_at);
+        alerts.update(&snapshot.devices, &session);
         previous = snapshot.devices.clone();
         on_update(&snapshot);
         if handle.update(|tray| tray.snapshot = snapshot).is_none() {

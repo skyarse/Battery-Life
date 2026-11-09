@@ -2,6 +2,8 @@ use chrono::{DateTime, Local};
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const LOW_BATTERY_PERCENT: u8 = 15;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
@@ -60,6 +62,12 @@ impl Device {
         let timestamp = i64::try_from(self.updated_at?).ok()?;
         let datetime = DateTime::from_timestamp(timestamp, 0)?.with_timezone(&Local);
         Some(datetime.format("%d.%m.%Y %H:%M:%S").to_string())
+    }
+
+    pub fn is_low_battery(&self) -> bool {
+        self.state == State::Ready && self.charging != Some(true)
+            && (self.percent.is_some_and(|percent| percent <= LOW_BATTERY_PERCENT)
+                || matches!(self.level.as_deref(), Some("Критический" | "Низкий")))
     }
 
     pub fn label(&self) -> String {
