@@ -1,6 +1,6 @@
 //! Read-only query formats. Protocol references and limitations: docs/PROTOCOLS.md.
 //! No settings, pairing, firmware, EQ or memory writes are implemented.
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use hidapi::HidDevice;
 use std::time::{Duration, Instant};
 
@@ -30,8 +30,9 @@ fn compx_valid(p: &[u8], command: u8) -> bool {
 }
 
 pub fn parse_compx(p: &[u8]) -> Option<Reading> {
-    if !compx_valid(p, 4) || p[5] < 2 || p[6] > 100 || p[7] > 1 { return None; }
-    Some(Reading { percent: Some(p[6]), level: None, charging: Some(p[7] == 1), approximate: true })
+    if !compx_valid(p, 4) || p[5] < 2 || p[6] > 100 { return None; }
+    let charging = match p[7] { 0 => Some(false), 1 => Some(true), _ => None };
+    Some(Reading { percent: Some(p[6]), level: None, charging, approximate: true })
 }
 
 pub fn parse_mchose(p: &[u8]) -> Option<Reading> {
@@ -73,7 +74,7 @@ fn write(dev: &HidDevice, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub fn zaopin(dev: &HidDevice) -> Result<Reading> {
+pub fn zaopin(dev: &HidDevice, product_id: u16) -> Result<Reading> {
     // Compx receivers can use the same USB ID for different brands and models.
     let mut identify = compx_packet(1);
     identify[5] = 8;
@@ -83,20 +84,32 @@ pub fn zaopin(dev: &HidDevice) -> Result<Reading> {
         .subsec_nanos();
     identify[6..10].copy_from_slice(&nonce.to_le_bytes());
     set_compx_checksum(&mut identify);
-    write(dev, &identify)?;
-    let identity = response(dev, Duration::from_millis(600), |p| compx_valid(p, 1) && p[5] >= 7)?;
-    if identity[10..12] != [7, 5] {
-        bail!("Приёмник не подтвердил модель ZAOPIN Z2 Max или мышь спит");
-    }
+    write(dev, &identify).context("Compx, запрос идентификации 0x01")?;
+    let identity = response(dev, Duration::from_millis(600), |p| compx_valid(p, 1) && p[5] >= 7)
+        .context("Compx, ответ идентификации 0x01")?;
+    let (cid, mid) = (identity[10], identity[11]);
+    check_zaopin_identity(product_id, cid, mid)?;
     std::thread::sleep(Duration::from_millis(10));
     // Confirm the mouse is online so a receiver's cached value is not treated as fresh.
-    write(dev, &compx_packet(3))?;
-    let online = response(dev, Duration::from_millis(600), |p| compx_valid(p, 3) && p[5] >= 1)?;
-    if online[6] == 0 { bail!("Мышь спит или отключена от приёмника"); }
+    write(dev, &compx_packet(3)).context("Compx, запрос связи 0x03")?;
+    let online = response(dev, Duration::from_millis(600), |p| compx_valid(p, 3) && p[5] >= 1)
+        .with_context(|| format!("Compx, ответ о связи 0x03 (CID {cid}, MID {mid})"))?;
+    if online[6] == 0 { bail!("Мышь спит или отключена от приёмника (CID {cid}, MID {mid})"); }
     std::thread::sleep(Duration::from_millis(10));
-    write(dev, &compx_packet(4))?;
-    let p = response(dev, Duration::from_millis(600), |p| parse_compx(p).is_some())?;
+    write(dev, &compx_packet(4)).context("Compx, запрос заряда 0x04")?;
+    let p = response(dev, Duration::from_millis(600), |p| parse_compx(p).is_some())
+        .with_context(|| format!("Compx, ответ о заряде 0x04 (CID {cid}, MID {mid})"))?;
     Ok(parse_compx(&p).unwrap())
+}
+
+fn check_zaopin_identity(product_id: u16, cid: u8, mid: u8) -> Result<()> {
+    // The reported Z2 Max uses the 3554:f517 receiver on usage ff02:0002,
+    // but its valid handshake returns different model bytes. Limit the
+    // exception to that receiver. Link and battery replies are still checked.
+    if product_id != 0xf517 && (cid, mid) != (7, 5) {
+        bail!("Приёмник не подтвердил модель ZAOPIN Z2 Max (CID {cid}, MID {mid})");
+    }
+    Ok(())
 }
 
 pub fn mchose(dev: &HidDevice) -> Result<Reading> {
@@ -128,6 +141,12 @@ pub fn xbox(dev: &HidDevice) -> Result<Reading> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reported_8k_receiver_does_not_require_the_reference_model_code() {
+        assert!(check_zaopin_identity(0xf517, 7, 9).is_ok());
+        assert!(check_zaopin_identity(0xf527, 7, 9).is_err());
+        assert!(check_zaopin_identity(0xf527, 7, 5).is_ok());
+    }
     fn compx_reply() -> [u8; 17] {
         let mut p = compx_packet(4);
         p[5] = 4; p[6] = 76; p[7] = 1;

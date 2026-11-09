@@ -24,7 +24,8 @@ pub fn scan(rows: &mut [Device], warnings: &mut Vec<String>) {
         let Some(row) = rows.iter_mut().find(|r| r.id == id) else { continue; };
         if row.state == State::Ready || !attempted.insert(info.path().to_bytes().to_vec()) { continue; }
         row.state = State::Unavailable;
-        let result = info.open_device(&api).map_err(|e| e.to_string()).and_then(|dev| query(&dev, id).map_err(|e| e.to_string()));
+        let result = info.open_device(&api).map_err(|e| e.to_string())
+            .and_then(|dev| query(&dev, id, info.product_id()).map_err(|e| format!("{e:#}")));
         match result {
             Ok(r) => row.reading(r.percent, r.level, r.charging, r.approximate, match id { "zaopin" => "USB HID · Compx", "mchose" => "USB HID · MCHOSE", "logitech" => "USB HID · HID++", _ => "Bluetooth HID · XInput" }),
             Err(e) => {
@@ -53,9 +54,9 @@ pub fn scan(rows: &mut [Device], warnings: &mut Vec<String>) {
     }
 }
 
-fn query(dev: &HidDevice, id: &str) -> anyhow::Result<Reading> {
+fn query(dev: &HidDevice, id: &str, product_id: u16) -> anyhow::Result<Reading> {
     match id {
-        "zaopin" => protocols::zaopin(dev),
+        "zaopin" => protocols::zaopin(dev, product_id),
         "mchose" => protocols::mchose(dev),
         "logitech" => protocols::logitech(dev),
         "8bitdo" => protocols::xbox(dev),

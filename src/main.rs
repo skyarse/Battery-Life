@@ -5,9 +5,10 @@ mod system;
 mod ui;
 
 use anyhow::{Context, Result};
-use ksni::{MenuItem, Tray, menu::StandardItem, blocking::TrayMethods};
+use ksni::{MenuItem, Tray, blocking::{Handle, TrayMethods}, menu::{StandardItem, SubMenu}};
 use model::{Device, State};
 use serde::Serialize;
+use slint::ComponentHandle;
 use std::{sync::{Arc, Mutex, mpsc}, time::Duration};
 
 const RULES: &str = include_str!("../packaging/70-battery-life.rules");
@@ -29,7 +30,7 @@ fn scan() -> Snapshot {
 }
 
 #[derive(Clone, Copy)]
-enum Command { Refresh, Details, Quit }
+enum Command { Refresh, Quit }
 
 struct BatteryTray {
     snapshot: Snapshot,
@@ -53,23 +54,38 @@ impl Tray for BatteryTray {
         }
     }
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let mut menu = vec![StandardItem { label: "Беспроводные устройства".into(), enabled: false, ..Default::default() }.into()];
+        let mut menu = vec![menu_text("Беспроводные устройства")];
         menu.push(MenuItem::Separator);
         for device in &self.snapshot.devices {
-            let tx = self.tx.clone();
-            menu.push(StandardItem {
+            let mut details = vec![menu_text(&device.detail)];
+            if !device.source.is_empty() {
+                details.push(menu_text(format!("Источник: {}", device.source)));
+            }
+            if let Some(updated_at) = device.updated_at {
+                let age = model::now().saturating_sub(updated_at);
+                details.push(menu_text(format!("Обновлено {age} с назад")));
+            }
+            menu.push(SubMenu {
                 label: format!("{} — {}", device.name, device.label()),
-                activate: Box::new(move |_| { let _ = tx.send(Command::Details); }),
+                submenu: details,
                 ..Default::default()
             }.into());
         }
         menu.push(MenuItem::Separator);
-        for (label, command) in [("Обновить", Command::Refresh), ("Подробности и доступ к устройствам…", Command::Details), ("Выход", Command::Quit)] {
+        for (label, command) in [("Обновить", Command::Refresh), ("Выход", Command::Quit)] {
             let tx = self.tx.clone();
             menu.push(StandardItem { label: label.into(), activate: Box::new(move |_| { let _ = tx.send(command); }), ..Default::default() }.into());
         }
         menu
     }
+}
+
+fn menu_text(label: impl AsRef<str>) -> MenuItem<BatteryTray> {
+    StandardItem {
+        label: label.as_ref().replace('_', "__"),
+        enabled: false,
+        ..Default::default()
+    }.into()
 }
 
 fn main() {
@@ -101,42 +117,46 @@ fn run() -> Result<()> {
 
     let (tx, rx) = mpsc::channel();
     let initial = Snapshot { version: env!("CARGO_PKG_VERSION"), checked_at: model::now(), devices: model::expected(), warnings: vec![] };
-    let shared = Arc::new(Mutex::new(initial.clone()));
-    let window = ui::create(shared.clone(), tx.clone())?;
-    if args.iter().any(|a| a == "--window") { window.show()?; }
-    let handle = BatteryTray { snapshot: initial, tx }.spawn().context("Не удалось создать значок в трее KDE")?;
+    let handle = BatteryTray { snapshot: initial.clone(), tx: tx.clone() }
+        .spawn()
+        .context("Не удалось создать значок в трее KDE")?;
+    if !args.iter().any(|a| a == "--window") {
+        monitor(handle, rx, |_| {});
+        return Ok(());
+    }
+
+    let shared = Arc::new(Mutex::new(initial));
+    let window = ui::create(shared.clone(), tx)?;
+    window.show()?;
     let weak = window.as_weak();
     std::thread::spawn(move || {
-        let mut previous = Vec::new();
-        loop {
-            let mut snapshot = scan();
-            model::retain_recent(&mut snapshot.devices, &previous, snapshot.checked_at);
-            previous = snapshot.devices.clone();
+        monitor(handle, rx, |snapshot| {
             if let Ok(mut current) = shared.lock() { *current = snapshot.clone(); }
-            let _ = handle.update(|tray| tray.snapshot = snapshot);
             let weak_update = weak.clone();
             let shared_update = shared.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = weak_update.upgrade() { ui::update(&window, &shared_update); }
             });
-            let next_scan = std::time::Instant::now() + Duration::from_secs(30);
-            loop {
-                match rx.recv_timeout(next_scan.saturating_duration_since(std::time::Instant::now())) {
-                    Ok(Command::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => break,
-                    Ok(Command::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        let _ = slint::invoke_from_event_loop(|| { let _ = slint::quit_event_loop(); });
-                        return;
-                    }
-                    Ok(Command::Details) => {
-                        let weak = weak.clone();
-                        let _ = slint::invoke_from_event_loop(move || { if let Some(w) = weak.upgrade() { let _ = w.show(); } });
-                    }
-                }
-            }
-        }
+        });
+        let _ = slint::invoke_from_event_loop(|| { let _ = slint::quit_event_loop(); });
     });
     slint::run_event_loop_until_quit()?;
     Ok(())
 }
 
-use slint::ComponentHandle;
+fn monitor(handle: Handle<BatteryTray>, rx: mpsc::Receiver<Command>, on_update: impl Fn(&Snapshot)) {
+    let mut previous = Vec::new();
+    loop {
+        let mut snapshot = scan();
+        model::retain_recent(&mut snapshot.devices, &previous, snapshot.checked_at);
+        previous = snapshot.devices.clone();
+        on_update(&snapshot);
+        if handle.update(|tray| tray.snapshot = snapshot).is_none() {
+            return;
+        }
+        match rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(Command::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Ok(Command::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
