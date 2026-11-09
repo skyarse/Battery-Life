@@ -2,7 +2,7 @@ name: Recover Battery Life v0.1.6 release
 
 on:
   push:
-    branches: [main]
+    branches: ['release/v0.1.6']
     paths: [.github/workflows/recover-v0.1.6.yml]
 
 permissions:
