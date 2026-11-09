@@ -1,0 +1,49 @@
+name: Recover Battery Life v0.1.6 release
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/recover-v0.1.6.yml]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: v0.1.6
+      BUILD_COMMIT: ca8a8ced60d0e868121807b471aa8d33720133ff
+    steps:
+      - name: Download the tested AppImage from the original build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: Battery-Life-x86_64
+          path: dist
+          github-token: ${{ github.token }}
+          run-id: '42672467430'
+      - name: Verify and publish
+        shell: bash
+        working-directory: dist
+        run: |
+          sha256sum --check Battery-Life-x86_64.AppImage.sha256
+
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft | grep -Fxq false; then
+            exit 0
+          fi
+
+          tagged_commit=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$RELEASE_TAG" \
+            --jq '.[] | select(.ref == "refs/tags/v0.1.6") | .object.sha')
+          tag_options=(--target "$BUILD_COMMIT")
+          if [[ -n "$tagged_commit" ]]; then
+            [[ "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)" == "$BUILD_COMMIT" ]]
+            tag_options=(--verify-tag)
+          fi
+
+          gh release create "$RELEASE_TAG" "${tag_options[@]}" \
+            --title "Battery Life $RELEASE_TAG" --generate-notes \
+            Battery-Life-x86_64.AppImage Battery-Life-x86_64.AppImage.sha256
