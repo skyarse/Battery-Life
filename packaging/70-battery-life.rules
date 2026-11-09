@@ -1,0 +1,17 @@
+# Battery Life: grant access only to the active local session, never world-writable.
+# Install before systemd's 73-seat-late.rules, then unplug/replug the receivers.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="291d", ATTRS{idProduct}=="385d", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f517", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f524", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f50d", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f527", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f526", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f50f", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c53f", TAG+="uaccess"
+# 8BitDo Pro 2 / Xbox-compatible X-mode Bluetooth identities.
+SUBSYSTEM=="hidraw", KERNELS=="0005:2DC8:6003.*", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNELS=="0005:2DC8:6006.*", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNELS=="0005:2DC8:3106.*", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNELS=="0005:045E:02E0.*", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNELS=="0005:045E:02FD.*", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNELS=="0005:045E:0B13.*", TAG+="uaccess"

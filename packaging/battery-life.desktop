@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Battery Life
+Comment=Wireless device battery levels
+Comment[ru]=Заряд беспроводных устройств
+Exec=battery-life
+Icon=battery-life
+Terminal=false
+Categories=Utility;
+StartupNotify=false

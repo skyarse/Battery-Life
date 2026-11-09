@@ -1,0 +1,59 @@
+name: Build AppImage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends desktop-file-utils libfontconfig1-dev squashfs-tools
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+      - name: Test and build
+        run: |
+          cargo test --release --locked
+          cargo build --release --locked
+          desktop-file-validate packaging/battery-life.desktop
+      - name: Package AppImage
+        env:
+          ARCH: x86_64
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          install -Dm755 target/release/battery-life AppDir/usr/bin/battery-life
+          install -Dm755 packaging/AppRun AppDir/AppRun
+          install -Dm644 packaging/battery-life.desktop AppDir/battery-life.desktop
+          install -Dm644 packaging/battery-life.svg AppDir/battery-life.svg
+          install -Dm644 LICENSE AppDir/usr/share/doc/battery-life/LICENSE
+          ln -s battery-life.svg AppDir/.DirIcon
+          curl --fail --location --retry 3 \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
+            --output "$RUNNER_TEMP/appimagetool"
+          printf '%s  %s\n' 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0' "$RUNNER_TEMP/appimagetool" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          mkdir -p dist
+          "$RUNNER_TEMP/appimagetool" --no-appstream AppDir dist/Battery-Life-x86_64.AppImage
+          dist/Battery-Life-x86_64.AppImage --version
+          dist/Battery-Life-x86_64.AppImage --print-udev-rules | diff - packaging/70-battery-life.rules
+          dist/Battery-Life-x86_64.AppImage --once | python3 -c 'import json, sys; rows = json.load(sys.stdin)["devices"]; assert {row["id"] for row in rows} == {"zaopin", "logitech", "8bitdo", "ciy", "mchose"}'
+          (cd dist && sha256sum Battery-Life-x86_64.AppImage > Battery-Life-x86_64.AppImage.sha256)
+      - name: Upload AppImage and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: Battery-Life-x86_64
+          path: dist/
+          if-no-files-found: error
