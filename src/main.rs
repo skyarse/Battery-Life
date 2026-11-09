@@ -76,9 +76,8 @@ impl Tray for BatteryTray {
             if !device.source.is_empty() {
                 details.push(menu_text(format!("Источник: {}", device.source)));
             }
-            if let Some(updated_at) = device.updated_at {
-                let age = model::now().saturating_sub(updated_at);
-                details.push(menu_text(format!("Обновлено {age} с назад")));
+            if let Some(reading_time) = device.reading_time() {
+                details.push(menu_text(format!("Последний ответ · {reading_time}")));
             }
             menu.push(SubMenu {
                 label: format!("{} — {}", device.name, device.label()),

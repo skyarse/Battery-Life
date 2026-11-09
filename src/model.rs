@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local};
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -35,7 +36,10 @@ impl Device {
     }
 
     pub fn reading(&mut self, percent: Option<u8>, level: Option<String>, charging: Option<bool>, approximate: bool, source: &str) {
-        if percent.is_some_and(|p| p > 100) || (percent.is_none() && level.is_none()) { return; }
+        let charging_only = percent.is_none() && level.is_none() && charging == Some(true);
+        if percent.is_some_and(|p| p > 100) || (percent.is_none() && level.is_none() && !charging_only) {
+            return;
+        }
         self.percent = percent;
         self.level = level;
         self.charging = charging;
@@ -43,10 +47,25 @@ impl Device {
         self.source = source.into();
         self.state = State::Ready;
         self.updated_at = Some(now());
-        self.detail = if approximate { "Приблизительный уровень, сообщённый устройством" } else { "Значение, сообщённое устройством" }.into();
+        self.detail = if charging_only {
+            "Во время зарядки приёмник не сообщает текущий процент"
+        } else if approximate {
+            "Приблизительный уровень, сообщённый устройством"
+        } else {
+            "Значение, сообщённое устройством"
+        }.into();
+    }
+
+    pub fn reading_time(&self) -> Option<String> {
+        let timestamp = i64::try_from(self.updated_at?).ok()?;
+        let datetime = DateTime::from_timestamp(timestamp, 0)?.with_timezone(&Local);
+        Some(datetime.format("%d.%m.%Y %H:%M:%S").to_string())
     }
 
     pub fn label(&self) -> String {
+        if self.state == State::Ready && self.charging == Some(true) && self.percent.is_none() && self.level.is_none() {
+            return "Заряжается".into();
+        }
         let value = match self.state {
             State::Ready | State::Stale => {
                 if let Some(p) = self.percent {
@@ -87,7 +106,10 @@ pub fn identify(name: &str) -> Option<&'static str> {
 pub fn retain_recent(rows: &mut [Device], previous: &[Device], timestamp: u64) {
     for row in rows {
         if matches!(row.state, State::Ready | State::Missing) { continue; }
-        if let Some(old) = previous.iter().find(|p| p.id == row.id && p.updated_at.is_some_and(|t| timestamp.saturating_sub(t) <= 300)) {
+        if let Some(old) = previous.iter().find(|p| {
+            p.id == row.id && (p.percent.is_some() || p.level.is_some())
+                && p.updated_at.is_some_and(|t| timestamp.saturating_sub(t) <= 300)
+        }) {
             let reason = row.detail.clone();
             row.percent = old.percent;
             row.level = old.level.clone();
@@ -104,6 +126,20 @@ pub fn retain_recent(rows: &mut [Device], previous: &[Device], timestamp: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn charging_without_a_level_is_visible_but_not_cached_as_a_level() {
+        let mut old = expected();
+        old[4].reading(None, None, Some(true), false, "USB HID · MCHOSE");
+        old[4].updated_at = Some(100);
+        assert_eq!(old[4].label(), "Заряжается");
+        assert_eq!(old[4].state, State::Ready);
+
+        let mut rows = expected();
+        rows[4].state = State::Unavailable;
+        retain_recent(&mut rows, &old, 110);
+        assert_eq!(rows[4].state, State::Unavailable);
+        assert_eq!(rows[4].percent, None);
+    }
     #[test]
     fn expired_and_failed_readings_do_not_turn_into_zero() {
         let mut old = expected();

@@ -4,7 +4,7 @@
 
 ## Запуск на Fedora KDE
 
-1. В [GitHub Actions](https://github.com/skyarse/Battery-Life/actions/workflows/appimage.yml) откройте успешный запуск **Build AppImage** и скачайте артефакт **Battery-Life-x86_64**. Распакуйте архив.
+1. Скачайте файл **Battery-Life-x86_64.AppImage** из [последнего релиза](https://github.com/skyarse/Battery-Life/releases/latest).
 2. В каталоге с AppImage выполните команды ниже. Если значок скрыт, раскройте системный лоток Plasma.
 
 ```sh
@@ -34,7 +34,7 @@ sudo udevadm control --reload-rules
 | Logitech G304 | LIGHTSPEED HID++. Приблизительный процент, который сообщает мышь. |
 | 8BitDo Pro 2 | Bluetooth в режиме X. Системный заряд или уровень из совместимого отчёта геймпада. |
 | CIY Tester 68 | Только системный источник. Чтение заряда через приёмник 2,4 ГГц пока не подтверждено. |
-| MCHOSE V9 PRO | Чтение заряда через приёмник 2,4 ГГц. |
+| MCHOSE V9 PRO | Приёмник 2,4 ГГц сообщает приблизительный уровень ступенями по 10%. При подключении кабеля отображается статус зарядки. |
 
 Подробности о поддержке и источниках приведены в [описании протоколов](docs/PROTOCOLS.md).
 
@@ -48,4 +48,4 @@ cargo run --locked -- --diagnose
 cargo run --locked
 ```
 
-GitHub Actions собирает AppImage для x86_64, проверяет запуск и публикует файл с контрольной суммой.
+GitHub Actions собирает AppImage для x86_64 и проверяет запуск. После успешной сборки в `main` новая версия из `Cargo.toml` публикуется в GitHub Releases вместе с контрольной суммой. Увеличьте версию пакета и обновите `Cargo.lock`, чтобы выпустить следующий релиз.

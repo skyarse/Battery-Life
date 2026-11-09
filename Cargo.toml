@@ -1,6 +1,6 @@
 [package]
 name = "battery-life"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "Wireless device batteries in the KDE system tray"
@@ -8,6 +8,7 @@ repository = "https://github.com/skyarse/Battery-Life"
 
 [dependencies]
 anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 hidapi = { version = "2.6.7", default-features = false, features = ["linux-native-basic-udev"] }
 ksni = { version = "0.3.7", features = ["blocking"] }
 serde = { version = "1", features = ["derive"] }

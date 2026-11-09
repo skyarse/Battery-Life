@@ -35,11 +35,36 @@ pub fn parse_compx(p: &[u8]) -> Option<Reading> {
     Some(Reading { percent: Some(p[6]), level: None, charging, approximate: true })
 }
 
-pub fn parse_mchose(p: &[u8]) -> Option<Reading> {
-    if p.len() < 4 || p[..2] != [0x55, 0x65] || p[2] > 100 { return None; }
-    // A full echo of the query is indistinguishable from a fake 1% reading.
-    if p[2] == 1 && p[3..].iter().all(|b| *b == 0) { return None; }
-    Some(Reading { percent: Some(p[2]), level: None, charging: None, approximate: false })
+fn is_mchose_reply(report: &[u8]) -> bool {
+    if report.len() < 4 || report[..2] != [0x55, 0x65] {
+        return false;
+    }
+    // An echoed request has the same prefix as a status reply.
+    !(report[2] == 1 && report[3..].iter().all(|byte| *byte == 0))
+}
+
+fn parse_mchose(report: &[u8]) -> Result<Reading> {
+    if !is_mchose_reply(report) {
+        bail!("Ответ MCHOSE не содержит статуса батареи");
+    }
+    let (percent, status) = (report[2], report[3]);
+    match status {
+        0x02 if percent <= 100 => Ok(Reading {
+            percent: Some(percent),
+            level: None,
+            charging: Some(false),
+            approximate: true,
+        }),
+        // The reported level can freeze while the cable is plugged in.
+        0x00 | 0x03 => Ok(Reading {
+            percent: None,
+            level: None,
+            charging: Some(true),
+            approximate: false,
+        }),
+        0x1a => bail!("Приёмник сообщает, что наушники выключены"),
+        _ => bail!("Неизвестный ответ MCHOSE о батарее (уровень {percent}, статус {status:#04x})"),
+    }
 }
 
 pub fn parse_hidpp(p: &[u8], feature: u8, software_id: u8) -> Option<Reading> {
@@ -116,8 +141,8 @@ pub fn mchose(dev: &HidDevice) -> Result<Reading> {
     let mut request = [0u8; 64];
     request[..3].copy_from_slice(&[0x55, 0x65, 1]);
     write(dev, &request)?;
-    let p = response(dev, Duration::from_millis(1000), |p| parse_mchose(p).is_some())?;
-    Ok(parse_mchose(&p).unwrap())
+    let reply = response(dev, Duration::from_millis(1000), is_mchose_reply)?;
+    parse_mchose(&reply)
 }
 
 pub fn logitech(dev: &HidDevice) -> Result<Reading> {
@@ -167,12 +192,25 @@ mod tests {
     }
     #[test]
     fn mchose_does_not_show_request_echo_as_one_percent() {
-        let mut p = [0; 64]; p[..3].copy_from_slice(&[0x55, 0x65, 1]);
-        assert!(parse_mchose(&p).is_none());
-        p[2] = 80;
-        assert_eq!(parse_mchose(&p).unwrap().percent, Some(80));
-        p[2] = 101; assert!(parse_mchose(&p).is_none());
-        assert!(parse_mchose(&[0x55, 0x11, 80, 0]).is_none());
+        let mut request = [0; 64];
+        request[..3].copy_from_slice(&[0x55, 0x65, 1]);
+        assert!(!is_mchose_reply(&request));
+        assert!(!is_mchose_reply(&[0x55, 0x11, 80, 0]));
+    }
+
+    #[test]
+    fn mchose_uses_the_reported_power_state() {
+        // Prefixes from captured V9 Pro dongle reports (see docs/PROTOCOLS.md).
+        let battery = parse_mchose(&[0x55, 0x65, 0x5a, 0x02]).unwrap();
+        assert_eq!(battery.percent, Some(90));
+        assert!(battery.approximate);
+        for frame in [[0x55, 0x65, 0x32, 0x03], [0x55, 0x65, 0x5a, 0x00]] {
+            let charging = parse_mchose(&frame).unwrap();
+            assert_eq!(charging.charging, Some(true));
+            assert_eq!(charging.percent, None);
+        }
+        assert!(parse_mchose(&[0x55, 0x65, 0, 0x1a]).is_err());
+        assert!(parse_mchose(&[0x55, 0x65, 101, 0x02]).is_err());
     }
     #[test]
     fn hidpp_matches_device_feature_and_request_id() {

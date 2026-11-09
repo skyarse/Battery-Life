@@ -88,7 +88,11 @@ pub fn update(window: &DetailsWindow, shared: &Arc<Mutex<Snapshot>>) {
     let Ok(s) = shared.lock() else { return; };
     let rows: Vec<_> = s.detected_devices().map(|d| DeviceRow {
         name: d.name.as_str().into(), value: d.label().into(), detail: d.detail.as_str().into(),
-        source: if let Some(t) = d.updated_at { format!("{} · {} с назад", d.source, crate::model::now().saturating_sub(t)) } else { d.source.clone() }.into(),
+        source: if let Some(reading_time) = d.reading_time() {
+            format!("{} · {reading_time}", d.source)
+        } else {
+            d.source.clone()
+        }.into(),
         percent: d.percent.unwrap_or_default() as f32,
         has_percent: d.percent.is_some(), stale: d.state == crate::model::State::Stale,
     }).collect();
