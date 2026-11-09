@@ -86,7 +86,7 @@ pub fn identify(name: &str) -> Option<&'static str> {
 /// An unsuccessful refresh never presents a previous value as a fresh measurement.
 pub fn retain_recent(rows: &mut [Device], previous: &[Device], timestamp: u64) {
     for row in rows {
-        if row.state == State::Ready { continue; }
+        if matches!(row.state, State::Ready | State::Missing) { continue; }
         if let Some(old) = previous.iter().find(|p| p.id == row.id && p.updated_at.is_some_and(|t| timestamp.saturating_sub(t) <= 300)) {
             let reason = row.detail.clone();
             row.percent = old.percent;
@@ -110,15 +110,20 @@ mod tests {
         old[0].reading(Some(73), None, Some(true), false, "test");
         old[0].updated_at = Some(100);
         let mut rows = expected();
+        rows[0].state = State::Unavailable;
         retain_recent(&mut rows, &old, 110);
         assert_eq!(rows[0].state, State::Stale);
         assert_eq!(rows[0].percent, Some(73));
         assert_eq!(rows[0].charging, None);
         assert!(rows[0].label().contains("устарело"));
         let mut rows = expected();
-        retain_recent(&mut rows, &old, 401);
+        retain_recent(&mut rows, &old, 110);
         assert_eq!(rows[0].percent, None);
         assert_eq!(rows[0].state, State::Missing);
+        rows[0].state = State::Unavailable;
+        retain_recent(&mut rows, &old, 401);
+        assert_eq!(rows[0].percent, None);
+        assert_eq!(rows[0].state, State::Unavailable);
     }
     #[test]
     fn unknown_keyboard_is_not_misidentified_as_ciy() {

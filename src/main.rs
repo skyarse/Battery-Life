@@ -12,6 +12,7 @@ use slint::ComponentHandle;
 use std::{sync::{Arc, Mutex, mpsc}, time::Duration};
 
 const RULES: &str = include_str!("../packaging/70-battery-life.rules");
+const NO_DEVICES: &str = "Устройства не обнаружены";
 
 #[derive(Clone, Serialize)]
 pub struct Snapshot {
@@ -19,6 +20,12 @@ pub struct Snapshot {
     checked_at: u64,
     devices: Vec<Device>,
     warnings: Vec<String>,
+}
+
+impl Snapshot {
+    fn detected_devices(&self) -> impl Iterator<Item = &Device> {
+        self.devices.iter().filter(|device| device.state != State::Missing)
+    }
 }
 
 fn scan() -> Snapshot {
@@ -47,16 +54,24 @@ impl Tray for BatteryTray {
         } else { "battery-good-symbolic" }.into()
     }
     fn tool_tip(&self) -> ksni::ToolTip {
+        let description = self.snapshot.detected_devices()
+            .map(|device| format!("{}: {}", device.name, device.label()))
+            .collect::<Vec<_>>()
+            .join("\n");
         ksni::ToolTip {
             title: "Battery Life".into(),
-            description: self.snapshot.devices.iter().map(|d| format!("{}: {}", d.name, d.label())).collect::<Vec<_>>().join("\n"),
+            description: if description.is_empty() { NO_DEVICES.into() } else { description },
             ..Default::default()
         }
     }
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let mut menu = vec![menu_text("Беспроводные устройства")];
         menu.push(MenuItem::Separator);
-        for device in &self.snapshot.devices {
+        let mut devices = self.snapshot.detected_devices().peekable();
+        if devices.peek().is_none() {
+            menu.push(menu_text(NO_DEVICES));
+        }
+        for device in devices {
             let mut details = vec![menu_text(&device.detail)];
             if !device.source.is_empty() {
                 details.push(menu_text(format!("Источник: {}", device.source)));

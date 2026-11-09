@@ -32,6 +32,10 @@ slint::slint! {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 8px;
+                    if root.rows.length == 0: Text {
+                        text: "Устройства не обнаружены";
+                        color: #a6b4c3;
+                    }
                     for row in root.rows: Rectangle {
                         height: 106px;
                         background: #222e3b;
@@ -82,7 +86,7 @@ pub fn create(shared: Arc<Mutex<Snapshot>>, tx: mpsc::Sender<Command>) -> anyhow
 
 pub fn update(window: &DetailsWindow, shared: &Arc<Mutex<Snapshot>>) {
     let Ok(s) = shared.lock() else { return; };
-    let rows: Vec<_> = s.devices.iter().map(|d| DeviceRow {
+    let rows: Vec<_> = s.detected_devices().map(|d| DeviceRow {
         name: d.name.as_str().into(), value: d.label().into(), detail: d.detail.as_str().into(),
         source: if let Some(t) = d.updated_at { format!("{} · {} с назад", d.source, crate::model::now().saturating_sub(t)) } else { d.source.clone() }.into(),
         percent: d.percent.unwrap_or_default() as f32,
