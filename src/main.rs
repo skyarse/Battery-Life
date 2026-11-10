@@ -4,16 +4,17 @@ mod model;
 mod notifications;
 mod protocols;
 mod system;
+mod tray_icon;
 mod ui;
 
 use anyhow::{Context, Result};
 use history::DeviceHistory;
-use ksni::{MenuItem, Tray, blocking::{Handle, TrayMethods}, menu::{StandardItem, SubMenu}};
+use ksni::{MenuItem, Tray, blocking::{Handle, TrayMethods}, menu::{RadioGroup, RadioItem, StandardItem, SubMenu}};
 use model::{Device, State};
 use notifications::LowBatteryAlerts;
 use serde::Serialize;
-use slint::ComponentHandle;
-use std::{sync::{Arc, Mutex, mpsc}, time::Duration};
+use std::{sync::{Arc, Mutex, mpsc}, time::{Duration, Instant}};
+use tray_icon::Orientation;
 use zbus::blocking::{Connection, connection::Builder};
 
 const RULES: &str = include_str!("../packaging/70-battery-life.rules");
@@ -35,18 +36,24 @@ impl Snapshot {
 
 fn scan() -> Snapshot {
     let mut devices = model::expected();
+    let known_count = devices.len();
     let mut warnings = Vec::new();
     system::scan(&mut devices, &mut warnings);
     hardware::scan(&mut devices, &mut warnings);
+    devices[known_count..].sort_by(|left, right| left.name.cmp(&right.name).then_with(|| left.id.cmp(&right.id)));
     Snapshot { version: env!("CARGO_PKG_VERSION"), checked_at: model::now(), devices, warnings }
 }
 
 #[derive(Clone, Copy)]
-enum Command { Refresh, Quit }
+enum Command { Refresh, OpenWindow, SaveOrientation(Orientation), Quit }
+
+enum WindowEvent<'a> { Update(&'a Snapshot), Show }
 
 struct BatteryTray {
     snapshot: Snapshot,
     tx: mpsc::Sender<Command>,
+    orientation: Orientation,
+    has_window: bool,
 }
 
 impl Tray for BatteryTray {
@@ -54,9 +61,15 @@ impl Tray for BatteryTray {
     fn id(&self) -> String { "battery-life".into() }
     fn title(&self) -> String { "Battery Life".into() }
     fn icon_name(&self) -> String {
+        if self.orientation != Orientation::Default {
+            return String::new();
+        }
         if self.snapshot.devices.iter().any(Device::is_low_battery) {
             "battery-caution-symbolic"
         } else { "battery-good-symbolic" }.into()
+    }
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.orientation.pixmaps(self.snapshot.devices.iter().any(Device::is_low_battery))
     }
     fn tool_tip(&self) -> ksni::ToolTip {
         let description = self.snapshot.visible_devices()
@@ -92,12 +105,35 @@ impl Tray for BatteryTray {
             }.into());
         }
         menu.push(MenuItem::Separator);
-        for (label, command) in [("Обновить", Command::Refresh), ("Выход", Command::Quit)] {
-            let tx = self.tx.clone();
-            menu.push(StandardItem { label: label.into(), activate: Box::new(move |_| { let _ = tx.send(command); }), ..Default::default() }.into());
+        menu.push(command_item("Обновить", Command::Refresh));
+        if self.has_window {
+            menu.push(command_item("Открыть окно", Command::OpenWindow));
         }
+        let options = Orientation::OPTIONS;
+        menu.push(SubMenu {
+            label: "Ориентация значка".into(),
+            submenu: vec![RadioGroup {
+                selected: options.iter().position(|(value, _)| *value == self.orientation).unwrap_or_default(),
+                select: Box::new(|tray: &mut Self, index| {
+                    let (orientation, _) = Orientation::OPTIONS[index];
+                    tray.orientation = orientation;
+                    let _ = tray.tx.send(Command::SaveOrientation(orientation));
+                }),
+                options: options.into_iter().map(|(_, label)| RadioItem { label: label.into(), ..Default::default() }).collect(),
+            }.into()],
+            ..Default::default()
+        }.into());
+        menu.push(command_item("Выход", Command::Quit));
         menu
     }
+}
+
+fn command_item(label: &str, command: Command) -> MenuItem<BatteryTray> {
+    StandardItem {
+        label: label.into(),
+        activate: Box::new(move |tray: &mut BatteryTray| { let _ = tray.tx.send(command); }),
+        ..Default::default()
+    }.into()
 }
 
 fn menu_text(label: impl AsRef<str>) -> MenuItem<BatteryTray> {
@@ -139,25 +175,43 @@ fn run() -> Result<()> {
 
     let (tx, rx) = mpsc::channel();
     let initial = Snapshot { version: env!("CARGO_PKG_VERSION"), checked_at: model::now(), devices: model::expected(), warnings: vec![] };
-    let handle = BatteryTray { snapshot: initial.clone(), tx: tx.clone() }
+    let show_window = args.iter().any(|a| a == "--window");
+    let shared = Arc::new(Mutex::new(initial.clone()));
+    let has_window = match slint::BackendSelector::new().select() {
+        Ok(()) => true,
+        Err(error) if show_window => return Err(error.into()),
+        Err(error) => {
+            eprintln!("Battery Life: окно подробностей недоступно: {error:#}");
+            false
+        }
+    };
+    let handle = BatteryTray { snapshot: initial, tx: tx.clone(), orientation: Orientation::load(), has_window }
         .spawn()
         .context("Не удалось создать значок в трее KDE")?;
-    if !args.iter().any(|a| a == "--window") {
+    if !has_window {
         monitor(handle, rx, instance, |_| {});
         return Ok(());
     }
 
-    let shared = Arc::new(Mutex::new(initial));
-    let window = ui::create(shared.clone(), tx)?;
-    window.show()?;
-    let weak = window.as_weak();
+    if show_window { ui::show(&shared, tx.clone())?; }
     std::thread::spawn(move || {
-        monitor(handle, rx, instance, |snapshot| {
-            if let Ok(mut current) = shared.lock() { *current = snapshot.clone(); }
-            let weak_update = weak.clone();
+        monitor(handle, rx, instance, |event| {
+            let show = matches!(event, WindowEvent::Show);
+            if let WindowEvent::Update(snapshot) = event
+                && let Ok(mut current) = shared.lock()
+            {
+                *current = snapshot.clone();
+            }
             let shared_update = shared.clone();
+            let tx = tx.clone();
             let _ = slint::invoke_from_event_loop(move || {
-                if let Some(window) = weak_update.upgrade() { ui::update(&window, &shared_update); }
+                if show {
+                    if let Err(error) = ui::show(&shared_update, tx) {
+                        eprintln!("Battery Life: не удалось открыть окно: {error}");
+                    }
+                } else {
+                    ui::update_open_window(&shared_update);
+                }
             });
         });
         let _ = slint::invoke_from_event_loop(|| { let _ = slint::quit_event_loop(); });
@@ -170,7 +224,7 @@ fn monitor(
     handle: Handle<BatteryTray>,
     rx: mpsc::Receiver<Command>,
     session: Connection,
-    on_update: impl Fn(&Snapshot),
+    window_event: impl Fn(WindowEvent<'_>),
 ) {
     let history_path = history::state_path();
     let mut history = history_path.as_deref().map(DeviceHistory::load)
@@ -190,13 +244,22 @@ fn monitor(
             }
         }
         alerts.update(&snapshot.devices, &session);
-        on_update(&snapshot);
+        window_event(WindowEvent::Update(&snapshot));
         if handle.update(|tray| tray.snapshot = snapshot).is_none() {
             return;
         }
-        match rx.recv_timeout(Duration::from_secs(30)) {
-            Ok(Command::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Ok(Command::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        let next_scan = Instant::now() + Duration::from_secs(30);
+        loop {
+            match rx.recv_timeout(next_scan.saturating_duration_since(Instant::now())) {
+                Ok(Command::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Ok(Command::OpenWindow) => window_event(WindowEvent::Show),
+                Ok(Command::SaveOrientation(orientation)) => {
+                    if let Err(error) = orientation.save() {
+                        eprintln!("Battery Life: не удалось сохранить ориентацию значка: {error:#}");
+                    }
+                }
+                Ok(Command::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
         }
     }
 }

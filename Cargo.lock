@@ -314,7 +314,7 @@ checksum = "868a8681ed3a19fae3e302c705b1cabf5be53278cc8720a9b82e9805c9ab171d"
 
 [[package]]
 name = "battery-life"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "chrono",

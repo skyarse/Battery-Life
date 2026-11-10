@@ -53,7 +53,7 @@ jobs:
           version=$(dist/Battery-Life-x86_64.AppImage --version)
           printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
           dist/Battery-Life-x86_64.AppImage --print-udev-rules | diff - packaging/70-battery-life.rules
-          dist/Battery-Life-x86_64.AppImage --once | python3 -c 'import json, sys; rows = json.load(sys.stdin)["devices"]; assert {row["id"] for row in rows} == {"zaopin", "logitech", "8bitdo", "ciy", "mchose"}'
+          dist/Battery-Life-x86_64.AppImage --once | python3 -c 'import json, sys; rows = json.load(sys.stdin)["devices"]; assert {"zaopin", "logitech", "8bitdo", "ciy", "mchose"} <= {row["id"] for row in rows}'
           (cd dist && sha256sum Battery-Life-x86_64.AppImage > Battery-Life-x86_64.AppImage.sha256)
       - name: Upload AppImage and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

@@ -13,6 +13,8 @@ pub struct DeviceHistory(BTreeMap<String, Option<SavedReading>>);
 
 #[derive(Deserialize, PartialEq, Serialize)]
 struct SavedReading {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     percent: Option<u8>,
     level: Option<String>,
     approximate: bool,
@@ -26,6 +28,7 @@ impl SavedReading {
             return None;
         }
         Some(Self {
+            name: device.id.starts_with("auto-").then(|| device.name.clone()),
             percent: device.percent,
             level: device.level.clone(),
             approximate: device.approximate,
@@ -67,20 +70,18 @@ impl DeviceHistory {
     }
 
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
-        let dir = path.parent().expect("the state file has a parent directory");
-        fs::create_dir_all(dir)?;
-        let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-        let file = fs::File::create_new(&temporary)?;
-        let result = serde_json::to_writer(file, self)
-            .map_err(anyhow::Error::from)
-            .and_then(|()| Ok(fs::rename(&temporary, path)?));
-        if result.is_err() {
-            let _ = fs::remove_file(temporary);
-        }
-        result
+        save_json(path, self)
     }
 
-    pub fn update(&mut self, devices: &mut [Device]) -> bool {
+    pub fn update(&mut self, devices: &mut Vec<Device>) -> bool {
+        for (id, reading) in &self.0 {
+            if let Some(name) = reading.as_ref().and_then(|r| r.name.as_deref())
+                && id.starts_with("auto-")
+                && !devices.iter().any(|device| device.id == *id)
+            {
+                devices.push(Device::new(id, name, ""));
+            }
+        }
         let mut changed = false;
         for device in devices {
             let saved = match self.0.entry(device.id.clone()) {
@@ -122,6 +123,20 @@ impl DeviceHistory {
         }
         changed
     }
+}
+
+pub fn save_json(path: &Path, value: &impl Serialize) -> anyhow::Result<()> {
+    let dir = path.parent().expect("the state file has a parent directory");
+    fs::create_dir_all(dir)?;
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    let file = fs::File::create_new(&temporary)?;
+    let result = serde_json::to_writer(file, value)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| Ok(fs::rename(&temporary, path)?));
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 #[cfg(test)]

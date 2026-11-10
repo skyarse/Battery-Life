@@ -1,6 +1,6 @@
 use crate::{Command, Snapshot};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
-use std::{rc::Rc, sync::{Arc, Mutex, mpsc}};
+use std::{cell::RefCell, rc::Rc, sync::{Arc, Mutex, mpsc}};
 
 slint::slint! {
     import { Button, ScrollView } from "std-widgets.slint";
@@ -76,15 +76,34 @@ slint::slint! {
     }
 }
 
-pub fn create(shared: Arc<Mutex<Snapshot>>, tx: mpsc::Sender<Command>) -> anyhow::Result<DetailsWindow> {
-    let window = DetailsWindow::new()?;
-    window.on_refresh(move || { let _ = tx.send(Command::Refresh); });
-    window.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
-    update(&window, &shared);
-    Ok(window)
+thread_local! {
+    static DETAILS_WINDOW: RefCell<Option<DetailsWindow>> = const { RefCell::new(None) };
 }
 
-pub fn update(window: &DetailsWindow, shared: &Arc<Mutex<Snapshot>>) {
+pub fn show(shared: &Arc<Mutex<Snapshot>>, tx: mpsc::Sender<Command>) -> anyhow::Result<()> {
+    DETAILS_WINDOW.with_borrow_mut(|stored| {
+        if stored.is_none() {
+            let window = DetailsWindow::new()?;
+            window.on_refresh(move || { let _ = tx.send(Command::Refresh); });
+            window.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+            *stored = Some(window);
+        }
+        let window = stored.as_ref().expect("details window was created");
+        update(window, shared);
+        window.show()?;
+        Ok(())
+    })
+}
+
+pub fn update_open_window(shared: &Arc<Mutex<Snapshot>>) {
+    DETAILS_WINDOW.with_borrow(|stored| {
+        if let Some(window) = stored {
+            update(window, shared);
+        }
+    });
+}
+
+fn update(window: &DetailsWindow, shared: &Arc<Mutex<Snapshot>>) {
     let Ok(s) = shared.lock() else { return; };
     let rows: Vec<_> = s.visible_devices().map(|d| DeviceRow {
         name: d.name.as_str().into(), value: d.label().into(), detail: d.detail.as_str().into(),
