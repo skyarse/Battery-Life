@@ -2,6 +2,6 @@
   <style id="current-color-scheme">.ColorScheme-Text { color: #232629; }</style>
   <g>
     <path class="ColorScheme-Text" fill="currentColor" fill-rule="evenodd" d="M2 6h18v4h2v4h-2v4H2zm2 2v8h14V8z"/>
-    <rect x="6" y="10" width="9" height="4" fill="#70d1ac"/>
+    <rect x="5" y="9" width="10" height="6" fill="#60c39e"/>
   </g>
 </svg>
