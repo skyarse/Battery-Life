@@ -18,11 +18,46 @@ impl Orientation {
         (Self::Right, "Набок вправо"),
         (Self::UpsideDown, "Вверх ногами"),
     ];
+}
 
+#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Style {
+    Color,
+    #[default]
+    Monochrome,
+}
+
+impl Style {
+    pub const OPTIONS: [(Self, &'static str); 2] = [
+        (Self::Color, "Обычный"),
+        (Self::Monochrome, "Монохром"),
+    ];
+}
+
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Appearance {
+    pub orientation: Orientation,
+    pub style: Style,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedAppearance {
+    Current(Appearance),
+    OrientationOnly(Orientation),
+}
+
+impl Appearance {
     pub fn load() -> Self {
         crate::history::state_path()
             .and_then(|path| std::fs::read(path.with_file_name("tray-icon.json")).ok())
             .and_then(|data| serde_json::from_slice(&data).ok())
+            .map(|saved| match saved {
+                SavedAppearance::Current(appearance) => appearance,
+                SavedAppearance::OrientationOnly(orientation) => Self { orientation, ..Self::default() },
+            })
             .unwrap_or_default()
     }
 
@@ -34,15 +69,16 @@ impl Orientation {
     }
 
     pub fn icon_name(self, low: bool) -> String {
-        let orientation = match self {
-            Self::Default => "normal",
-            Self::Left => "left",
-            Self::Right => "right",
-            Self::UpsideDown => "inverted",
+        let orientation = match self.orientation {
+            Orientation::Default => "normal",
+            Orientation::Left => "left",
+            Orientation::Right => "right",
+            Orientation::UpsideDown => "inverted",
         };
+        let style = if self.style == Style::Color { "_color" } else { "" };
         let level = if low { "_low" } else { "" };
         // KDE uses hyphen-separated prefixes to look up fallback icons.
-        format!("battery_life_tray_{orientation}{level}-symbolic")
+        format!("battery_life_tray_{orientation}{style}{level}-symbolic")
     }
 }
 

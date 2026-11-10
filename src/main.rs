@@ -14,7 +14,7 @@ use model::{Device, State};
 use notifications::LowBatteryAlerts;
 use serde::Serialize;
 use std::{sync::{Arc, Mutex, mpsc}, time::{Duration, Instant}};
-use tray_icon::Orientation;
+use tray_icon::{Appearance, Orientation, Style};
 use zbus::blocking::{Connection, connection::Builder};
 
 const RULES: &str = include_str!("../packaging/70-battery-life.rules");
@@ -45,14 +45,14 @@ fn scan() -> Snapshot {
 }
 
 #[derive(Clone, Copy)]
-enum Command { Refresh, OpenWindow, SaveOrientation(Orientation), Quit }
+enum Command { Refresh, OpenWindow, SaveAppearance(Appearance), Quit }
 
 enum WindowEvent<'a> { Update(&'a Snapshot), Show }
 
 struct BatteryTray {
     snapshot: Snapshot,
     tx: mpsc::Sender<Command>,
-    orientation: Orientation,
+    appearance: Appearance,
     icon_theme_path: String,
     has_window: bool,
 }
@@ -69,7 +69,7 @@ impl Tray for BatteryTray {
         if self.icon_theme_path.is_empty() {
             return if low { "battery-caution-symbolic" } else { "battery-good-symbolic" }.into();
         }
-        self.orientation.icon_name(low)
+        self.appearance.icon_name(low)
     }
     fn tool_tip(&self) -> ksni::ToolTip {
         let description = self.snapshot.visible_devices()
@@ -113,13 +113,27 @@ impl Tray for BatteryTray {
         menu.push(SubMenu {
             label: "Ориентация значка".into(),
             submenu: vec![RadioGroup {
-                selected: options.iter().position(|(value, _)| *value == self.orientation).unwrap_or_default(),
+                selected: options.iter().position(|(value, _)| *value == self.appearance.orientation).unwrap_or_default(),
                 select: Box::new(|tray: &mut Self, index| {
                     let (orientation, _) = Orientation::OPTIONS[index];
-                    tray.orientation = orientation;
-                    let _ = tray.tx.send(Command::SaveOrientation(orientation));
+                    tray.appearance.orientation = orientation;
+                    let _ = tray.tx.send(Command::SaveAppearance(tray.appearance));
                 }),
                 options: options.into_iter().map(|(_, label)| RadioItem { label: label.into(), ..Default::default() }).collect(),
+            }.into()],
+            ..Default::default()
+        }.into());
+        let styles = Style::OPTIONS;
+        menu.push(SubMenu {
+            label: "Стиль значка".into(),
+            submenu: vec![RadioGroup {
+                selected: styles.iter().position(|(value, _)| *value == self.appearance.style).unwrap_or_default(),
+                select: Box::new(|tray: &mut Self, index| {
+                    let (style, _) = Style::OPTIONS[index];
+                    tray.appearance.style = style;
+                    let _ = tray.tx.send(Command::SaveAppearance(tray.appearance));
+                }),
+                options: styles.into_iter().map(|(_, label)| RadioItem { label: label.into(), ..Default::default() }).collect(),
             }.into()],
             ..Default::default()
         }.into());
@@ -186,7 +200,7 @@ fn run() -> Result<()> {
         }
     };
     let handle = BatteryTray {
-        snapshot: initial, tx: tx.clone(), orientation: Orientation::load(),
+        snapshot: initial, tx: tx.clone(), appearance: Appearance::load(),
         icon_theme_path: tray_icon::theme_path(), has_window,
     }
         .spawn()
@@ -256,9 +270,9 @@ fn monitor(
             match rx.recv_timeout(next_scan.saturating_duration_since(Instant::now())) {
                 Ok(Command::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Ok(Command::OpenWindow) => window_event(WindowEvent::Show),
-                Ok(Command::SaveOrientation(orientation)) => {
-                    if let Err(error) = orientation.save() {
-                        eprintln!("Battery Life: не удалось сохранить ориентацию значка: {error:#}");
+                Ok(Command::SaveAppearance(appearance)) => {
+                    if let Err(error) = appearance.save() {
+                        eprintln!("Battery Life: не удалось сохранить настройки значка: {error:#}");
                     }
                 }
                 Ok(Command::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
