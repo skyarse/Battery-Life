@@ -51,7 +51,13 @@ slint::slint! {
                                 height: 4px;
                                 background: #384657;
                                 border-radius: 2px;
-                                Rectangle { width: parent.width * row.percent / 100; height: parent.height; background: row.stale ? #c59d56 : #65c4a2; border-radius: 2px; }
+                                Rectangle {
+                                    x: 0px;
+                                    width: parent.width * row.percent / 100;
+                                    height: parent.height;
+                                    background: row.stale ? #c59d56 : #65c4a2;
+                                    border-radius: 2px;
+                                }
                             }
                             Text { text: row.detail; color: #b4c1cf; font-size: 12px; wrap: word-wrap; }
                             Text { text: row.source; color: #8496a9; font-size: 11px; }

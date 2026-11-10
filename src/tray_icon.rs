@@ -34,9 +34,6 @@ impl Orientation {
     }
 
     pub fn pixmaps(self, low: bool) -> Vec<Icon> {
-        if self == Self::Default {
-            return Vec::new();
-        }
         [1, 2].into_iter().map(|scale| self.pixmap(scale, low)).collect()
     }
 

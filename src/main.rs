@@ -60,14 +60,6 @@ impl Tray for BatteryTray {
     const MENU_ON_ACTIVATE: bool = true;
     fn id(&self) -> String { "battery-life".into() }
     fn title(&self) -> String { "Battery Life".into() }
-    fn icon_name(&self) -> String {
-        if self.orientation != Orientation::Default {
-            return String::new();
-        }
-        if self.snapshot.devices.iter().any(Device::is_low_battery) {
-            "battery-caution-symbolic"
-        } else { "battery-good-symbolic" }.into()
-    }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         self.orientation.pixmaps(self.snapshot.devices.iter().any(Device::is_low_battery))
     }
