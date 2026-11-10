@@ -23,7 +23,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends desktop-file-utils libfontconfig1-dev squashfs-tools
+          sudo apt-get install -y --no-install-recommends desktop-file-utils libfontconfig1-dev squashfs-tools zsync
           rustup toolchain install 1.99.1 --profile minimal
           rustup default 1.99.1
       - name: Test and build
@@ -50,13 +50,22 @@ jobs:
           printf '%s  %s\n' 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0' "$RUNNER_TEMP/appimagetool" | sha256sum --check
           chmod +x "$RUNNER_TEMP/appimagetool"
           mkdir -p dist
-          "$RUNNER_TEMP/appimagetool" --no-appstream AppDir dist/Battery-Life-x86_64.AppImage
-          version=$(dist/Battery-Life-x86_64.AppImage --version)
+          version=$(target/release/battery-life --version)
+          appimage=dist/Battery-Life-x86_64.AppImage
+          update_info="gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}|latest|${appimage##*/}.zsync"
+          file_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/${appimage##*/}"
+          "$RUNNER_TEMP/appimagetool" --no-appstream --updateinformation "$update_info" \
+            --file-url "$file_url" AppDir "$appimage"
+          test "$("$appimage" --version)" = "$version"
+          test "$(env -u APPIMAGE_EXTRACT_AND_RUN "$appimage" --appimage-updateinformation)" = "$update_info"
+          appimage_sha1=$(sha1sum "$appimage" | cut -d ' ' -f 1)
+          grep -aFxq "URL: $file_url" "$appimage.zsync"
+          grep -aFxq "SHA-1: $appimage_sha1" "$appimage.zsync"
           printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
           dist/Battery-Life-x86_64.AppImage --print-udev-rules | diff - packaging/70-battery-life.rules
           dist/Battery-Life-x86_64.AppImage --once | python3 -c 'import json, sys; rows = json.load(sys.stdin)["devices"]; assert {"zaopin", "logitech", "8bitdo", "ciy", "mchose"} <= {row["id"] for row in rows}'
           (cd dist && sha256sum Battery-Life-x86_64.AppImage > Battery-Life-x86_64.AppImage.sha256)
-      - name: Upload AppImage and checksum
+      - name: Upload AppImage, update metadata and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: Battery-Life-x86_64
@@ -112,4 +121,5 @@ jobs:
 
           gh release create "$RELEASE_TAG" "${tag_options[@]}" \
             --title "Battery Life $RELEASE_TAG" --generate-notes \
-            Battery-Life-x86_64.AppImage Battery-Life-x86_64.AppImage.sha256
+            Battery-Life-x86_64.AppImage Battery-Life-x86_64.AppImage.sha256 \
+            Battery-Life-x86_64.AppImage.zsync
