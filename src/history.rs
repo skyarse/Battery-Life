@@ -151,7 +151,7 @@ mod tests {
         let mut devices = expected();
         assert!(!history.update(&mut devices));
         assert_eq!(devices[0].state, State::Offline);
-        assert_eq!(devices[0].label(), "≈12% · отключено");
+        assert_eq!(devices[0].label(), "отключено · ≈12%");
         assert_eq!(devices[0].updated_at, Some(100));
         assert_eq!(devices[0].charging, None);
         assert!(!devices[0].is_low_battery());
@@ -174,12 +174,12 @@ mod tests {
         let mut devices = expected();
         devices[4].state = State::Unavailable;
         assert!(!history.update(&mut devices));
-        assert_eq!(devices[4].label(), "≈60% · устарело");
+        assert_eq!(devices[4].label(), "устарело · ≈60%");
 
         let mut devices = expected();
         devices[4].state = State::Offline;
         assert!(!history.update(&mut devices));
-        assert_eq!(devices[4].label(), "≈60% · отключено");
+        assert_eq!(devices[4].label(), "отключено · ≈60%");
 
         devices[4].reading(Some(80), None, Some(false), true, "USB HID");
         assert!(history.update(&mut devices));

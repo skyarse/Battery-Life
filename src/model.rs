@@ -87,17 +87,21 @@ impl Device {
             State::PermissionDenied => "Нужны права доступа".into(),
         };
         let status = if self.state == State::Offline {
-            " · отключено"
+            Some("отключено")
         } else if self.charging == Some(true) {
-            " · зарядка"
+            Some("зарядка")
         } else if self.state == State::Stale {
-            " · устарело"
+            Some("устарело")
         } else if self.percent.is_some() && self.is_low_battery() {
-            " · низкий заряд"
+            Some("низкий заряд")
         } else {
-            ""
+            None
         };
-        format!("{value}{status}")
+        match (self.percent, status) {
+            (_, None) => value,
+            (Some(_), Some(status)) => format!("{status} · {value}"),
+            (None, Some(status)) => format!("{value} · {status}"),
+        }
     }
 }
 
