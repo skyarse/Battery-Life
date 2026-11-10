@@ -41,6 +41,7 @@ jobs:
           install -Dm755 packaging/AppRun AppDir/AppRun
           install -Dm644 packaging/battery-life.desktop AppDir/battery-life.desktop
           install -Dm644 packaging/battery-life.svg AppDir/battery-life.svg
+          install -Dm644 -t AppDir/usr/share/battery-life/icons/hicolor/scalable/status packaging/tray-icons/hicolor/scalable/status/*.svg
           install -Dm644 LICENSE AppDir/usr/share/doc/battery-life/LICENSE
           ln -s battery-life.svg AppDir/.DirIcon
           curl --fail --location --retry 3 \
