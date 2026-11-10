@@ -54,8 +54,11 @@ jobs:
           appimage=dist/Battery-Life-x86_64.AppImage
           update_info="gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}|latest|${appimage##*/}.zsync"
           file_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/${appimage##*/}"
-          "$RUNNER_TEMP/appimagetool" --no-appstream --updateinformation "$update_info" \
-            --file-url "$file_url" AppDir "$appimage"
+          (
+            cd dist
+            "$RUNNER_TEMP/appimagetool" --no-appstream --updateinformation "$update_info" \
+              --file-url "$file_url" ../AppDir "${appimage##*/}"
+          )
           test "$("$appimage" --version)" = "$version"
           test "$(env -u APPIMAGE_EXTRACT_AND_RUN "$appimage" --appimage-updateinformation)" = "$update_info"
           appimage_sha1=$(sha1sum "$appimage" | cut -d ' ' -f 1)
