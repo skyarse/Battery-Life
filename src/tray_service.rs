@@ -96,9 +96,9 @@ fn register(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn spawn(tray: BatteryTray, connection: Connection) -> Result<Handle> {
+pub fn spawn(tray: BatteryTray, builder: zbus::blocking::connection::Builder<'_>) -> Result<Handle> {
     let state = Arc::new(Mutex::new(tray));
-    connection.object_server().at(PATH, StatusNotifierItem(state.clone()))?;
+    let connection = builder.serve_at(PATH, StatusNotifierItem(state.clone()))?.build()?;
     let dbus = zbus::blocking::fdo::DBusProxy::new(&connection)?;
     let changes = dbus.receive_name_owner_changed()?;
     register(&connection)?;
@@ -139,8 +139,16 @@ mod tests {
         assert_eq!(item.tool_tip().2, "Battery Life");
     }
 
+    struct Watcher(mpsc::Sender<String>);
+    #[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
+    impl Watcher {
+        fn register_status_notifier_item(&self, service: &str) {
+            let _ = self.0.send(service.to_owned());
+        }
+    }
+
     #[test]
-    fn dbus_exposes_custom_context_menu_and_keeps_left_activation_separate() -> Result<()> {
+    fn dbus_registers_custom_context_menu_and_keeps_left_activation_separate() -> Result<()> {
         use std::{io::{BufRead, BufReader}, process::{Child, Command as ProcessCommand, Stdio}};
         struct Bus(Child);
         impl Drop for Bus {
@@ -152,15 +160,19 @@ mod tests {
         let mut address = String::new();
         BufReader::new(bus.0.stdout.as_mut().unwrap()).read_line(&mut address)?;
         let (tx, rx) = mpsc::channel();
-        let item = StatusNotifierItem(Arc::new(Mutex::new(BatteryTray {
+        let (registered, registrations) = mpsc::channel();
+        let client = zbus::blocking::connection::Builder::address(address.trim())?
+            .method_timeout(std::time::Duration::from_secs(3))
+            .name(WATCHER)?.serve_at("/StatusNotifierWatcher", Watcher(registered))?.build()?;
+        let handle = spawn(BatteryTray {
             snapshot: Snapshot { version: "test", checked_at: 0, devices: vec![], warnings: vec![] },
             tx, appearance: Appearance::default(), icon_theme_path: String::new(), has_panel: true,
-        })));
-        let server = zbus::blocking::connection::Builder::address(address.trim())?
-            .serve_at(PATH, item)?.build()?;
-        let client = zbus::blocking::connection::Builder::address(address.trim())?
-            .method_timeout(std::time::Duration::from_secs(3)).build()?;
-        let proxy = Proxy::new(&client, server.unique_name().unwrap().as_str(), PATH, INTERFACE)?;
+        }, zbus::blocking::connection::Builder::address(address.trim())?)?;
+        assert_eq!(registrations.recv_timeout(std::time::Duration::from_secs(1))?, PATH);
+        let proxy = Proxy::new(&client, handle.connection.unique_name().unwrap().as_str(), PATH, INTERFACE)?;
+        handle.update(|tray| tray.icon_theme_path = "/test/icons".into()).unwrap();
+        let icon_path: String = proxy.get_property("IconThemePath")?;
+        assert_eq!(icon_path, "/test/icons");
         let menu: zbus::zvariant::OwnedObjectPath = proxy.get_property("Menu")?;
         assert_eq!(menu.as_str(), "/NO_DBUSMENU");
         let tooltip: Tooltip = proxy.get_property("ToolTip")?;

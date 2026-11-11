@@ -139,7 +139,7 @@ fn run() -> Result<()> {
     let handle = tray_service::spawn(BatteryTray {
         snapshot: initial, tx: tx.clone(), appearance: Appearance::load(),
         icon_theme_path: tray_icon::theme_path(), has_panel: true,
-    }, instance.clone())
+    }, Builder::session()?.method_timeout(Duration::from_secs(3)))
         .context("Не удалось создать значок в трее KDE")?;
     if !has_window {
         monitor(handle, rx, instance, |_| {});
