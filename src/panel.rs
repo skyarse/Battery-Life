@@ -145,19 +145,19 @@ impl State {
             let info = self.outputs.info(&output)?;
             Some((output, info))
         }).collect::<Vec<_>>();
-        let selected = choices.iter().position(|(_, info)| {
-            let (left, top) = info.logical_position.unwrap_or(info.location);
-            let (width, height) = info.logical_size.unwrap_or((1920, 1080));
-            x >= left && x < left + width && y >= top && y < top + height
-        }).unwrap_or_default();
         anyhow::ensure!(!choices.is_empty(), "No Wayland output is available");
+        let native_coordinates = plasma_uses_native_coordinates();
+        let single_output = choices.len() == 1;
+        let selected = choices.iter().position(|(_, info)| {
+            activation_geometry(info, native_coordinates, single_output).contains((x, y))
+        }).unwrap_or_default();
         let (output, info) = choices.swap_remove(selected);
-        let (left, top) = info.logical_position.unwrap_or(info.location);
-        let (width, height) = info.logical_size.unwrap_or((1920, 1080));
+        let geometry = activation_geometry(&info, native_coordinates, single_output);
+        let (width, height) = geometry.logical_size;
         self.scale = info.scale_factor.max(1);
         self.width = width.max(1) as u32;
         self.height = height.max(1) as u32;
-        let (local_x, local_y) = ((x-left).clamp(0, width), (y-top).clamp(0, height));
+        let (local_x, local_y) = geometry.local_position((x, y));
         self.position = (local_x, local_y);
         self.output_size = (width, height);
         self.ui.set_settings(false);
@@ -220,6 +220,79 @@ impl State {
     }
 }
 
+struct ActivationGeometry {
+    origin: (i32, i32),
+    extent: (i32, i32),
+    logical_size: (i32, i32),
+}
+
+impl ActivationGeometry {
+    fn contains(&self, point: (i32, i32)) -> bool {
+        point.0 >= self.origin.0 && point.0 < self.origin.0 + self.extent.0
+            && point.1 >= self.origin.1 && point.1 < self.origin.1 + self.extent.1
+    }
+
+    fn local_position(&self, point: (i32, i32)) -> (i32, i32) {
+        let convert = |value: i32, origin: i32, extent: i32, logical: i32| {
+            (((value - origin) as f64 * logical as f64 / extent.max(1) as f64).round() as i32).clamp(0, logical)
+        };
+        (convert(point.0, self.origin.0, self.extent.0, self.logical_size.0),
+         convert(point.1, self.origin.1, self.extent.1, self.logical_size.1))
+    }
+}
+
+fn activation_geometry(info: &smithay_client_toolkit::output::OutputInfo, native: bool, single: bool) -> ActivationGeometry {
+    let origin = info.logical_position.unwrap_or(info.location);
+    let logical_size = info.logical_size.unwrap_or((1920, 1080));
+    let extent = if native {
+        info.modes.iter().find(|mode| mode.current).map(|mode| {
+            match info.transform {
+                wl_output::Transform::_90 | wl_output::Transform::_270
+                | wl_output::Transform::Flipped90 | wl_output::Transform::Flipped270 => (mode.dimensions.1, mode.dimensions.0),
+                _ => mode.dimensions,
+            }
+        }).unwrap_or((logical_size.0 * info.scale_factor.max(1), logical_size.1 * info.scale_factor.max(1)))
+    } else {
+        logical_size
+    };
+    ActivationGeometry { origin: if native && single { (0, 0) } else { origin }, extent, logical_size }
+}
+
+fn xwayland_clients_scale(config: &str) -> Option<bool> {
+    let mut kscreen = false;
+    let mut result = None;
+    for line in config.lines().map(str::trim) {
+        if line.starts_with('[') {
+            kscreen = line == "[KScreen]" || line == "[KScreen][$i]";
+        } else if kscreen {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim().trim_end_matches("[$i]") == "XwaylandClientsScale" {
+                    result = match value.trim().to_ascii_lowercase().as_str() {
+                        "false" | "0" => Some(false),
+                        "true" | "1" => Some(true),
+                        _ => result,
+                    };
+                }
+            }
+        }
+    }
+    result
+}
+
+fn plasma_uses_native_coordinates() -> bool {
+    let kde = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default()
+        .split(':').any(|desktop| desktop.eq_ignore_ascii_case("KDE"))
+        || std::env::var("KDE_FULL_SESSION").is_ok_and(|value| value == "true");
+    if !kde { return false; }
+    let mut directories = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config")))
+        .into_iter().collect::<Vec<_>>();
+    directories.extend(std::env::split_paths(&std::env::var_os("XDG_CONFIG_DIRS").unwrap_or_else(|| "/etc/xdg".into())));
+    directories.into_iter().find_map(|directory| {
+        std::fs::read_to_string(directory.join("kdeglobals")).ok().and_then(|text| xwayland_clients_scale(&text))
+    }).unwrap_or(true)
+}
+
 fn popup_geometry(output: (i32, i32), available: (i32, i32), position: (i32, i32), desired_height: i32) -> (i32, i32, i32, i32) {
     let (width, height) = (available.0.max(1), available.1.max(1));
     let reserved_x = (output.0 - width).max(0);
@@ -253,7 +326,40 @@ fn popup_geometry(output: (i32, i32), available: (i32, i32), position: (i32, i32
 
 #[cfg(test)]
 mod geometry_tests {
-    use super::popup_geometry;
+    use super::{popup_geometry, ActivationGeometry, xwayland_clients_scale};
+
+    #[test]
+    fn fractional_plasma_coordinates_center_popup_on_the_icon() {
+        for (extent, point) in [((2560, 1440), (2000, 1410)), ((3072, 1728), (2400, 1692)), ((4096, 2304), (3200, 2256))] {
+            let geometry = ActivationGeometry { origin: (0, 0), extent, logical_size: (2048, 1152) };
+            assert!(geometry.contains(point));
+            let position = geometry.local_position(point);
+            assert_eq!(position, (1600, 1128));
+            let (x, y, w, h) = popup_geometry((2048, 1152), (2048, 1104), position, 190);
+            assert_eq!(x + w / 2, 1600);
+            assert_eq!(y + h, 1096);
+        }
+    }
+
+    #[test]
+    fn logical_coordinates_and_nonzero_screen_origins_are_preserved() {
+        let logical = ActivationGeometry { origin: (-1920, 0), extent: (1920, 1080), logical_size: (1920, 1080) };
+        assert!(logical.contains((-320, 1050)));
+        assert!(!logical.contains((100, 1050)));
+        assert_eq!(logical.local_position((-320, 1050)), (1600, 1050));
+        let native = ActivationGeometry { origin: (1920, 0), extent: (2560, 1440), logical_size: (2048, 1152) };
+        assert!(native.contains((3920, 1410)));
+        assert_eq!(native.local_position((3920, 1410)), (1600, 1128));
+    }
+
+    #[test]
+    fn plasma_coordinate_setting_respects_explicit_false_and_config_groups() {
+        assert_eq!(xwayland_clients_scale("[KScreen]\nXwaylandClientsScale=false\n"), Some(false));
+        assert_eq!(xwayland_clients_scale("[KScreen]\nXwaylandClientsScale=true\n"), Some(true));
+        assert_eq!(xwayland_clients_scale("[Other]\nXwaylandClientsScale=false\n"), None);
+        assert_eq!(xwayland_clients_scale("[KScreen][$i]\nXwaylandClientsScale[$i]=0\n"), Some(false));
+    }
+
 
     #[test]
     fn bottom_tray_opens_above_reserved_panel_even_near_a_corner() {
