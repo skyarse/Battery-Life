@@ -16,7 +16,7 @@ slint::slint! {
         in property <[PanelRow]> rows;
         in property <length> panel-x;
         in property <length> panel-y;
-        in property <length> panel-width: 320px;
+        in property <length> panel-width: 288px;
         in property <length> panel-height: 440px;
         in property <int> orientation;
         in property <int> icon-style;
@@ -47,9 +47,9 @@ slint::slint! {
                 spacing: 9px;
                 HorizontalLayout {
                     spacing: 8px;
-                    Text { text: root.settings ? (root.english ? "Settings" : "Настройки") : "Battery Life"; color: #f2f5f8; font-size: 16px; font-weight: 600; vertical-alignment: center; }
-                    Button { text: root.settings ? (root.english ? "Back" : "Назад") : (root.english ? "Settings" : "Настройки"); clicked => { root.settings = !root.settings; } }
-                    Button { text: "×"; max-width: 34px; clicked => { root.dismiss(); } }
+                    Text { text: root.settings ? (root.english ? "Settings" : "Настройки") : "Battery Life"; color: #f2f5f8; font-size: 15px; font-weight: 600; vertical-alignment: center; }
+                    Button { horizontal-stretch: 0; text: root.settings ? (root.english ? "Back" : "Назад") : (root.english ? "Settings" : "Настройки"); clicked => { root.settings = !root.settings; } }
+                    Button { text: "×"; max-width: 28px; clicked => { root.dismiss(); } }
                 }
                 if !root.settings: ScrollView {
                     vertical-stretch: 1;
@@ -71,8 +71,8 @@ slint::slint! {
                                     spacing: 6px;
                                     HorizontalLayout {
                                         spacing: 14px;
-                                        Text { text: row.name; color: #f2f5f8; font-size: 14px; overflow: elide; }
-                                        Text { text: row.value; color: #b7d9c9; font-size: 14px; horizontal-alignment: right; }
+                                        Text { text: row.name; min-width: 0px; horizontal-stretch: 1; color: #f2f5f8; font-size: 14px; overflow: elide; }
+                                        Text { text: row.value; horizontal-stretch: 0; color: #b7d9c9; font-size: 14px; horizontal-alignment: right; }
                                     }
                                     if root.expanded-id == row.id: Text { text: row.detail; color: #bcc8d2; font-size: 12px; wrap: word-wrap; }
                                     if root.expanded-id == row.id: Text { text: row.source; color: #9fafbd; font-size: 11px; wrap: word-wrap; }
@@ -84,7 +84,9 @@ slint::slint! {
                         }
                     }
                 }
-                if root.settings: VerticalLayout {
+                if root.settings: ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
                     spacing: 12px;
                     alignment: start;
                     Text { text: root.english ? "Icon orientation" : "Ориентация значка"; color: #f2f5f8; }
@@ -106,7 +108,7 @@ slint::slint! {
                         selected(value) => { root.set-language(self.current-index); }
                     }
                     Button { text: root.english ? "Open window" : "Открыть окно"; clicked => { root.open-details(); root.dismiss(); } }
-                    Rectangle { vertical-stretch: 1; }
+                    }
                 }
             }
         }
@@ -179,7 +181,7 @@ mod tests {
         let panel = create(sender, dismiss).unwrap();
         panel.set_panel_x(20.0);
         panel.set_panel_y(20.0);
-        panel.set_panel_width(320.0);
+        panel.set_panel_width(288.0);
         panel.set_panel_height(480.0);
         let mut device = crate::model::Device::new("probe", "ZAOPIN Z2 Max", "");
         device.reading(Some(45), None, Some(false), true, "USB HID · Compx");
@@ -201,7 +203,7 @@ mod tests {
         click(100.0, 100.0);
         assert_eq!(panel.get_expanded_id(), "probe");
         render();
-        click(270.0, 50.0);
+        click(230.0, 50.0);
         assert!(panel.get_settings());
         render();
         panel.invoke_set_orientation(1);
@@ -213,6 +215,12 @@ mod tests {
         let english = Appearance { language: crate::i18n::Language::English, ..Appearance::default() };
         update(&panel, &snapshot, english);
         assert!(panel.get_english());
+        render();
+        click(230.0, 50.0);
+        assert!(!panel.get_settings());
+        render();
+        click(230.0, 50.0);
+        assert!(panel.get_settings());
         click(500.0, 100.0);
         assert!(dismissed.try_recv().is_ok());
     }

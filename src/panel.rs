@@ -82,7 +82,7 @@ fn run(tx: mpsc::Sender<Command>, receiver: mpsc::Receiver<Message>) -> Result<(
         seats: SeatState::new(&globals, &qh), shm,
         compositor, shell, layer: None, window, ui, pool: None, pixels: Vec::new(),
         pointer: None, keyboard: None, configured: false, width: 1, height: 1,
-        scale: 1, position: (0, 0),
+        scale: 1, position: (0, 0), output_size: (1, 1),
     };
     let mut event_loop = EventLoop::<State>::try_new()?;
     WaylandSource::new(connection.clone(), queue).insert(event_loop.handle()).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -136,6 +136,7 @@ struct State {
     height: u32,
     scale: i32,
     position: (i32, i32),
+    output_size: (i32, i32),
 }
 
 impl State {
@@ -158,6 +159,7 @@ impl State {
         self.height = height.max(1) as u32;
         let (local_x, local_y) = ((x-left).clamp(0, width), (y-top).clamp(0, height));
         self.position = (local_x, local_y);
+        self.output_size = (width, height);
         self.ui.set_settings(false);
         self.ui.set_expanded_id("".into());
         self.update_geometry();
@@ -169,7 +171,7 @@ impl State {
         let layer = self.shell.create_layer_surface(qh, surface, Layer::Overlay, Some("battery-life-panel"), Some(&output));
         layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
         layer.set_size(0, 0);
-        layer.set_exclusive_zone(-1);
+        layer.set_exclusive_zone(0);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         layer.commit();
         self.layer = Some(layer);
@@ -178,24 +180,12 @@ impl State {
     }
 
     fn update_geometry(&self) {
-        let (width, height) = (self.width as i32, self.height as i32);
-        let panel_width = 320.min(width.saturating_sub(16)).max(1);
-        let panel_height = (self.ui.get_desired_height().ceil() as i32).min(height.saturating_sub(16)).max(1);
-        let (local_x, local_y) = self.position;
-        let distances = [local_y, height-local_y, local_x, width-local_x];
-        let edge = distances.iter().enumerate().min_by_key(|(_, distance)| **distance).map(|(i, _)| i).unwrap_or(1);
-        let (px, py) = match edge {
-            0 => (local_x-panel_width/2, local_y+8),
-            1 => (local_x-panel_width/2, local_y-panel_height-8),
-            2 => (local_x+8, local_y-panel_height/2),
-            _ => (local_x-panel_width-8, local_y-panel_height/2),
-        };
-        let max_x = (width-panel_width).max(0);
-        let max_y = (height-panel_height).max(0);
-        let inset_x = 8.min(max_x/2);
-        let inset_y = 8.min(max_y/2);
-        self.ui.set_panel_x(px.clamp(inset_x, max_x-inset_x) as f32);
-        self.ui.set_panel_y(py.clamp(inset_y, max_y-inset_y) as f32);
+        let (px, py, panel_width, panel_height) = popup_geometry(
+            self.output_size, (self.width as i32, self.height as i32),
+            self.position, self.ui.get_desired_height().ceil() as i32,
+        );
+        self.ui.set_panel_x(px as f32);
+        self.ui.set_panel_y(py as f32);
         self.ui.set_panel_width(panel_width as f32);
         self.ui.set_panel_height(panel_height as f32);
     }
@@ -227,6 +217,83 @@ impl State {
         buffer.attach_to(layer.wl_surface())?;
         layer.commit();
         Ok(())
+    }
+}
+
+fn popup_geometry(output: (i32, i32), available: (i32, i32), position: (i32, i32), desired_height: i32) -> (i32, i32, i32, i32) {
+    let (width, height) = (available.0.max(1), available.1.max(1));
+    let reserved_x = (output.0 - width).max(0);
+    let reserved_y = (output.1 - height).max(0);
+    let at_top = position.1 < output.1 / 2;
+    let at_left = position.0 < output.0 / 2;
+    let local_x = (position.0 - if at_left { reserved_x } else { 0 }).clamp(0, width);
+    let local_y = (position.1 - if at_top { reserved_y } else { 0 }).clamp(0, height);
+    let panel_width = 288.min(width.saturating_sub(16)).max(1);
+    let panel_height = desired_height.min(height.saturating_sub(16)).max(1);
+    let horizontal_panel = if reserved_y > 0 {
+        true
+    } else if reserved_x > 0 {
+        false
+    } else {
+        let vertical_distance = position.1.min(output.1 - position.1);
+        let horizontal_distance = position.0.min(output.0 - position.0);
+        vertical_distance <= 96 || vertical_distance <= horizontal_distance
+    };
+    let (x, y) = if horizontal_panel {
+        (local_x - panel_width / 2, if at_top { local_y + 8 } else { local_y - panel_height - 8 })
+    } else {
+        (if at_left { local_x + 8 } else { local_x - panel_width - 8 }, local_y - panel_height / 2)
+    };
+    let max_x = (width - panel_width).max(0);
+    let max_y = (height - panel_height).max(0);
+    let inset_x = 8.min(max_x / 2);
+    let inset_y = 8.min(max_y / 2);
+    (x.clamp(inset_x, max_x - inset_x), y.clamp(inset_y, max_y - inset_y), panel_width, panel_height)
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::popup_geometry;
+
+    #[test]
+    fn bottom_tray_opens_above_reserved_panel_even_near_a_corner() {
+        let (x, y, w, h) = popup_geometry((1920, 1080), (1920, 1020), (120, 1050), 190);
+        assert_eq!(x, 8);
+        assert_eq!(y + h, 1012);
+        assert_eq!(w, 288);
+        let (x, y, w, h) = popup_geometry((1920, 1080), (1920, 1020), (1200, 1050), 370);
+        assert_eq!(x + w / 2, 1200);
+        assert_eq!(y + h, 1012);
+    }
+
+    #[test]
+    fn top_and_side_panels_use_available_surface_coordinates() {
+        let (x, y, w, _) = popup_geometry((1920, 1080), (1920, 1020), (1200, 30), 190);
+        assert_eq!(x + w / 2, 1200);
+        assert_eq!(y, 8);
+        let (x, y, _, h) = popup_geometry((1920, 1080), (1860, 1080), (30, 700), 370);
+        assert_eq!(x, 8);
+        assert_eq!(y + h / 2, 700);
+        let (x, _, w, _) = popup_geometry((1920, 1080), (1860, 1080), (1890, 700), 370);
+        assert_eq!(x + w, 1852);
+    }
+
+    #[test]
+    fn unreserved_bottom_corner_still_opens_above_the_icon() {
+        let (x, y, _, h) = popup_geometry((1920, 1080), (1920, 1080), (20, 1050), 190);
+        assert_eq!(x, 8);
+        assert_eq!(y + h, 1042);
+    }
+
+    #[test]
+    fn expanded_and_small_screen_popups_stay_inside_work_area() {
+        for size in [(1920, 1020), (320, 240), (200, 150), (1, 1)] {
+            for position in [(0, 0), (1910, 1070), (960, 1050)] {
+                let (x, y, w, h) = popup_geometry((1920, 1080), size, position, 560);
+                assert!(x >= 0 && y >= 0 && w > 0 && h > 0);
+                assert!(x + w <= size.0 && y + h <= size.1);
+            }
+        }
     }
 }
 
