@@ -51,6 +51,9 @@ jobs:
           chmod +x "$RUNNER_TEMP/appimagetool"
           mkdir -p dist
           version=$(target/release/battery-life --version)
+          test -s "docs/releases/v$version.md"
+          mkdir -p dist/release-notes
+          cp docs/releases/v*.md dist/release-notes/
           appimage=dist/Battery-Life-x86_64.AppImage
           update_info="gh-releases-zsync|${GITHUB_REPOSITORY%/*}|${GITHUB_REPOSITORY#*/}|latest|${appimage##*/}.zsync"
           file_url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/${appimage##*/}"
@@ -101,6 +104,22 @@ jobs:
         run: |
           sha256sum --check Battery-Life-x86_64.AppImage.sha256
 
+          for notes in release-notes/v*.md; do
+            tag=${notes##*/}
+            tag=${tag%.md}
+            if release=$(gh release view "$tag" --json body,isDraft 2>/dev/null); then
+              if [[ "$(jq -r '.isDraft' <<< "$release")" == 'true' ]]; then
+                continue
+              fi
+              if [[ "$(jq -r '.body' <<< "$release")" != "$(cat "$notes")" ]]; then
+                gh release edit "$tag" --notes-file "$notes"
+              fi
+            elif [[ "$tag" != "$RELEASE_TAG" ]]; then
+              echo "Could not read release $tag." >&2
+              exit 1
+            fi
+          done
+
           if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null); then
             if [[ "$draft" == 'false' ]]; then
               echo "Release $RELEASE_TAG is already published."
@@ -123,6 +142,6 @@ jobs:
           fi
 
           gh release create "$RELEASE_TAG" "${tag_options[@]}" \
-            --title "Battery Life $RELEASE_TAG" --generate-notes \
+            --title "Battery Life $RELEASE_TAG" --notes-file "release-notes/$RELEASE_TAG.md" \
             Battery-Life-x86_64.AppImage Battery-Life-x86_64.AppImage.sha256 \
             Battery-Life-x86_64.AppImage.zsync

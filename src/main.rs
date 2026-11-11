@@ -61,6 +61,9 @@ impl Tray for BatteryTray {
     const MENU_ON_ACTIVATE: bool = true;
     fn id(&self) -> String { "battery-life".into() }
     fn title(&self) -> String { "Battery Life".into() }
+    fn menu_about_to_show(&mut self) {
+        let _ = self.tx.send(Command::Refresh);
+    }
     fn icon_theme_path(&self) -> String {
         self.icon_theme_path.clone()
     }
@@ -105,7 +108,19 @@ impl Tray for BatteryTray {
             }.into());
         }
         menu.push(MenuItem::Separator);
-        menu.push(command_item("Обновить", Command::Refresh));
+        menu.push(SubMenu {
+            label: "Настройки".into(),
+            submenu: self.settings_menu(),
+            ..Default::default()
+        }.into());
+        menu.push(command_item("Выход", Command::Quit));
+        menu
+    }
+}
+
+impl BatteryTray {
+    fn settings_menu(&self) -> Vec<MenuItem<Self>> {
+        let mut menu = Vec::new();
         if self.has_window {
             menu.push(command_item("Открыть окно", Command::OpenWindow));
         }
@@ -137,7 +152,6 @@ impl Tray for BatteryTray {
             }.into()],
             ..Default::default()
         }.into());
-        menu.push(command_item("Выход", Command::Quit));
         menu
     }
 }
