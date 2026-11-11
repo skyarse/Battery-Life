@@ -2,6 +2,8 @@ mod hardware;
 mod history;
 mod model;
 mod notifications;
+mod panel;
+mod panel_ui;
 mod protocols;
 mod system;
 mod tray_icon;
@@ -45,7 +47,10 @@ fn scan() -> Snapshot {
 }
 
 #[derive(Clone, Copy)]
-enum Command { Refresh, OpenWindow, SaveAppearance(Appearance), Quit }
+enum Command {
+    Refresh, OpenWindow, SaveAppearance(Appearance), SetOrientation(Orientation), SetStyle(Style),
+    TogglePanel(i32, i32), PanelUnavailable, Quit,
+}
 
 enum WindowEvent<'a> { Update(&'a Snapshot), Show }
 
@@ -55,10 +60,14 @@ struct BatteryTray {
     appearance: Appearance,
     icon_theme_path: String,
     has_window: bool,
+    has_panel: bool,
 }
 
 impl Tray for BatteryTray {
-    const MENU_ON_ACTIVATE: bool = true;
+    fn activate(&mut self, x: i32, y: i32) {
+        let command = if self.has_panel { Command::TogglePanel(x, y) } else { Command::OpenWindow };
+        let _ = self.tx.send(command);
+    }
     fn id(&self) -> String { "battery-life".into() }
     fn title(&self) -> String { "Battery Life".into() }
     fn menu_about_to_show(&mut self) {
@@ -126,7 +135,7 @@ impl BatteryTray {
         }
         let options = Orientation::OPTIONS;
         menu.push(SubMenu {
-            label: "Ориентация значка".into(),
+            label: "Ориентация значка\t  ".into(),
             submenu: vec![RadioGroup {
                 selected: options.iter().position(|(value, _)| *value == self.appearance.orientation).unwrap_or_default(),
                 select: Box::new(|tray: &mut Self, index| {
@@ -140,7 +149,7 @@ impl BatteryTray {
         }.into());
         let styles = Style::OPTIONS;
         menu.push(SubMenu {
-            label: "Стиль значка".into(),
+            label: "Стиль значка\t  ".into(),
             submenu: vec![RadioGroup {
                 selected: styles.iter().position(|(value, _)| *value == self.appearance.style).unwrap_or_default(),
                 select: Box::new(|tray: &mut Self, index| {
@@ -215,7 +224,7 @@ fn run() -> Result<()> {
     };
     let handle = BatteryTray {
         snapshot: initial, tx: tx.clone(), appearance: Appearance::load(),
-        icon_theme_path: tray_icon::theme_path(), has_window,
+        icon_theme_path: tray_icon::theme_path(), has_window, has_panel: true,
     }
         .spawn()
         .context("Не удалось создать значок в трее KDE")?;
@@ -257,6 +266,10 @@ fn monitor(
     session: Connection,
     window_event: impl Fn(WindowEvent<'_>),
 ) {
+    let Some((sender, mut appearance)) = handle.update(|tray| (tray.tx.clone(), tray.appearance)) else {
+        return;
+    };
+    let panel = panel::Panel::start(sender);
     let history_path = history::state_path();
     let mut history = history_path.as_deref().map(DeviceHistory::load)
         .transpose().unwrap_or_else(|error| {
@@ -276,7 +289,8 @@ fn monitor(
         }
         alerts.update(&snapshot.devices, &session);
         window_event(WindowEvent::Update(&snapshot));
-        if handle.update(|tray| tray.snapshot = snapshot).is_none() {
+        panel.send(panel::Message::Update(snapshot.clone(), appearance));
+        if handle.update(|tray| tray.snapshot = snapshot.clone()).is_none() {
             return;
         }
         let next_scan = Instant::now() + Duration::from_secs(30);
@@ -284,7 +298,22 @@ fn monitor(
             match rx.recv_timeout(next_scan.saturating_duration_since(Instant::now())) {
                 Ok(Command::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Ok(Command::OpenWindow) => window_event(WindowEvent::Show),
-                Ok(Command::SaveAppearance(appearance)) => {
+                Ok(Command::TogglePanel(x, y)) => {
+                    panel.send(panel::Message::Toggle(x, y));
+                    break;
+                }
+                Ok(Command::PanelUnavailable) => {
+                    let _ = handle.update(|tray| tray.has_panel = false);
+                }
+                Ok(command @ (Command::SaveAppearance(_) | Command::SetOrientation(_) | Command::SetStyle(_))) => {
+                    match command {
+                        Command::SaveAppearance(value) => appearance = value,
+                        Command::SetOrientation(value) => appearance.orientation = value,
+                        Command::SetStyle(value) => appearance.style = value,
+                        _ => unreachable!(),
+                    }
+                    let _ = handle.update(|tray| tray.appearance = appearance);
+                    panel.send(panel::Message::Update(snapshot.clone(), appearance));
                     if let Err(error) = appearance.save() {
                         eprintln!("Battery Life: не удалось сохранить настройки значка: {error:#}");
                     }
