@@ -179,7 +179,7 @@ impl State {
 
     fn update_geometry(&self) {
         let (width, height) = (self.width as i32, self.height as i32);
-        let panel_width = 390.min(width.saturating_sub(16)).max(1);
+        let panel_width = 320.min(width.saturating_sub(16)).max(1);
         let panel_height = (self.ui.get_desired_height().ceil() as i32).min(height.saturating_sub(16)).max(1);
         let (local_x, local_y) = self.position;
         let distances = [local_y, height-local_y, local_x, width-local_x];

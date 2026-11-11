@@ -51,14 +51,15 @@ fn send(session: &Connection, device: &Device) -> zbus::Result<()> {
         ("desktop-entry", Value::from("battery-life")),
         ("urgency", Value::from(1u8)),
     ]);
-    let body = format!("{} — {}", device.name, device.label());
+    let language = crate::tray_icon::Appearance::load().language;
+    let body = language.translate(&format!("{} — {}", device.name, device.label()));
     session.call_method(
         Some("org.freedesktop.Notifications"),
         "/org/freedesktop/Notifications",
         Some("org.freedesktop.Notifications"),
         "Notify",
         &(
-            "Battery Life", 0u32, "battery-caution-symbolic", "Низкий заряд",
+            "Battery Life", 0u32, "battery-caution-symbolic", language.translate("Низкий заряд"),
             body, Vec::<&str>::new(), hints, -1i32,
         ),
     )?;

@@ -40,6 +40,7 @@ impl Style {
 pub struct Appearance {
     pub orientation: Orientation,
     pub style: Style,
+    pub language: crate::i18n::Language,
 }
 
 #[derive(Deserialize)]

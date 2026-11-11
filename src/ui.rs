@@ -21,19 +21,20 @@ slint::slint! {
         min-height: 560px;
         background: #18212b;
         in property <[DeviceRow]> rows;
+        in property <bool> english;
         in property <string> status;
         callback refresh();
         VerticalLayout {
             padding: 20px;
             spacing: 12px;
             Text { text: "Battery Life"; color: #f2f5f8; font-size: 26px; font-weight: 700; }
-            Text { text: "Заряд беспроводных устройств"; color: #a6b4c3; font-size: 14px; }
+            Text { text: root.english ? "Wireless device batteries" : "Заряд беспроводных устройств"; color: #a6b4c3; font-size: 14px; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 8px;
                     if root.rows.length == 0: Text {
-                        text: "Устройства не обнаружены";
+                        text: root.english ? "No devices detected" : "Устройства не обнаружены";
                         color: #a6b4c3;
                     }
                     for row in root.rows: Rectangle {
@@ -73,11 +74,11 @@ slint::slint! {
                 VerticalLayout {
                     padding: 12px;
                     spacing: 5px;
-                    Text { text: "Доступ к USB-приёмникам"; color: #f2f5f8; font-weight: 600; }
-                    Text { text: "Если нужны права доступа, установите правила udev по инструкции в README. После этого переподключите приёмник. Запускать приложение через sudo не нужно."; color: #b4c1cf; font-size: 12px; wrap: word-wrap; }
+                    Text { text: root.english ? "USB receiver access" : "Доступ к USB-приёмникам"; color: #f2f5f8; font-weight: 600; }
+                    Text { text: root.english ? "If access is denied, install the udev rules from the README and reconnect the receiver. Run Battery Life as your regular user." : "Если нужны права доступа, установите правила udev по инструкции в README. После этого переподключите приёмник. Запускать приложение через sudo не нужно."; color: #b4c1cf; font-size: 12px; wrap: word-wrap; }
                 }
             }
-            Button { text: "Обновить показания"; clicked => { root.refresh(); } }
+            Button { text: root.english ? "Refresh readings" : "Обновить показания"; clicked => { root.refresh(); } }
         }
     }
 }
@@ -111,8 +112,10 @@ pub fn update_open_window(shared: &Arc<Mutex<Snapshot>>) {
 
 fn update(window: &DetailsWindow, shared: &Arc<Mutex<Snapshot>>) {
     let Ok(s) = shared.lock() else { return; };
+    let language = crate::tray_icon::Appearance::load().language;
+    window.set_english(language == crate::i18n::Language::English);
     let rows: Vec<_> = s.visible_devices().map(|d| DeviceRow {
-        name: d.name.as_str().into(), value: d.label().into(), detail: d.detail.as_str().into(),
+        name: language.translate(&d.name).into(), value: language.translate(&d.label()).into(), detail: language.translate(&d.detail).into(),
         source: if let Some(reading_time) = d.reading_time() {
             format!("{} · {reading_time}", d.source)
         } else {
@@ -124,5 +127,5 @@ fn update(window: &DetailsWindow, shared: &Arc<Mutex<Snapshot>>) {
     }).collect();
     window.set_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
     let status = if s.warnings.is_empty() { "Автообновление каждые 30 секунд. Недоступный заряд не означает 0%.".into() } else { format!("Автообновление: 30 с. {}", s.warnings.join(" · ")) };
-    window.set_status(SharedString::from(status));
+    window.set_status(SharedString::from(language.translate(&status)));
 }

@@ -2,7 +2,7 @@
 
 Wireless device battery levels in the KDE Plasma system tray on Wayland. Left-click the battery icon to open a compact popup panel and check for updated readings. Device names appear on the left, with charge levels or connection status on the right. Click a device row to expand its data source and last-reading time inside the panel.
 
-The **Настройки** (Settings) page contains **Открыть окно** (Open window), **Ориентация значка** (Icon orientation), and **Стиль значка** (Icon style). Orientation and style preferences are saved between sessions. Use `--window` to open the details window at startup.
+The **Настройки** (Settings) page contains **Открыть окно** (Open window), **Ориентация значка** (Icon orientation), and **Стиль значка** (Icon style). The Settings button is next to the panel title. A Language selector offers Russian and English. Orientation, style, and language preferences are saved between sessions. Use `--window` to open the details window at startup.
 
 The panel closes when you click outside it, press Escape, or use its close button. A right-click on the tray icon opens Plasma's context menu as a fallback.
 

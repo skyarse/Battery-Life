@@ -1,4 +1,5 @@
 mod hardware;
+mod i18n;
 mod history;
 mod model;
 mod notifications;
@@ -48,7 +49,7 @@ fn scan() -> Snapshot {
 
 #[derive(Clone, Copy)]
 enum Command {
-    Refresh, OpenWindow, SaveAppearance(Appearance), SetOrientation(Orientation), SetStyle(Style),
+    Refresh, OpenWindow, SaveAppearance(Appearance), SetOrientation(Orientation), SetStyle(Style), SetLanguage(i18n::Language),
     TogglePanel(i32, i32), PanelUnavailable, Quit,
 }
 
@@ -90,7 +91,7 @@ impl Tray for BatteryTray {
             .join("\n");
         ksni::ToolTip {
             title: "Battery Life".into(),
-            description: if description.is_empty() { NO_DEVICES.into() } else { description },
+            description: self.appearance.language.translate(if description.is_empty() { NO_DEVICES } else { &description }),
             ..Default::default()
         }
     }
@@ -123,6 +124,7 @@ impl Tray for BatteryTray {
             ..Default::default()
         }.into());
         menu.push(command_item("Выход", Command::Quit));
+        translate_menu(&mut menu, self.appearance.language);
         menu
     }
 }
@@ -162,6 +164,22 @@ impl BatteryTray {
             ..Default::default()
         }.into());
         menu
+    }
+}
+
+fn translate_menu(menu: &mut [MenuItem<BatteryTray>], language: i18n::Language) {
+    for item in menu {
+        match item {
+            MenuItem::Standard(item) => item.label = language.translate(&item.label),
+            MenuItem::SubMenu(item) => {
+                item.label = language.translate(&item.label);
+                translate_menu(&mut item.submenu, language);
+            }
+            MenuItem::RadioGroup(group) => for option in &mut group.options {
+                option.label = language.translate(&option.label);
+            },
+            _ => {}
+        }
     }
 }
 
@@ -305,11 +323,12 @@ fn monitor(
                 Ok(Command::PanelUnavailable) => {
                     let _ = handle.update(|tray| tray.has_panel = false);
                 }
-                Ok(command @ (Command::SaveAppearance(_) | Command::SetOrientation(_) | Command::SetStyle(_))) => {
+                Ok(command @ (Command::SaveAppearance(_) | Command::SetOrientation(_) | Command::SetStyle(_) | Command::SetLanguage(_))) => {
                     match command {
                         Command::SaveAppearance(value) => appearance = value,
                         Command::SetOrientation(value) => appearance.orientation = value,
                         Command::SetStyle(value) => appearance.style = value,
+                        Command::SetLanguage(value) => appearance.language = value,
                         _ => unreachable!(),
                     }
                     let _ = handle.update(|tray| tray.appearance = appearance);
@@ -317,6 +336,7 @@ fn monitor(
                     if let Err(error) = appearance.save() {
                         eprintln!("Battery Life: не удалось сохранить настройки значка: {error:#}");
                     }
+                    window_event(WindowEvent::Update(&snapshot));
                 }
                 Ok(Command::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }

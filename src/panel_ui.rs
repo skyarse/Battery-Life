@@ -16,16 +16,17 @@ slint::slint! {
         in property <[PanelRow]> rows;
         in property <length> panel-x;
         in property <length> panel-y;
-        in property <length> panel-width: 390px;
+        in property <length> panel-width: 320px;
         in property <length> panel-height: 440px;
         in property <int> orientation;
         in property <int> icon-style;
-        out property <length> desired-height: root.settings ? 350px : min(560px, 120px + root.rows.length * 54px + (root.expanded-id != "" ? 90px : 0px));
+        in property <bool> english;
+        out property <length> desired-height: root.settings ? 370px : min(560px, 82px + root.rows.length * 54px + (root.expanded-id != "" ? 90px : 0px));
         in-out property <bool> settings: false;
         in-out property <string> expanded-id;
         callback dismiss();
         callback open-details();
-        callback quit-app();
+        callback set-language(int);
         callback set-orientation(int);
         callback set-style(int);
 
@@ -45,7 +46,8 @@ slint::slint! {
                 padding: 14px;
                 spacing: 9px;
                 HorizontalLayout {
-                    Text { text: root.settings ? "Настройки" : "Battery Life"; color: #f2f5f8; font-size: 16px; font-weight: 600; }
+                    Text { text: root.settings ? (root.english ? "Settings" : "Настройки") : "Battery Life"; color: #f2f5f8; font-size: 16px; font-weight: 600; }
+                    Button { text: root.settings ? (root.english ? "Back" : "Назад") : (root.english ? "Settings" : "Настройки"); clicked => { root.settings = !root.settings; } }
                     Button { text: "×"; max-width: 34px; clicked => { root.dismiss(); } }
                 }
                 if !root.settings: ScrollView {
@@ -54,7 +56,7 @@ slint::slint! {
                         spacing: 6px;
                         alignment: start;
                         if root.rows.length == 0: Text {
-                            text: "Устройства не обнаружены";
+                            text: root.english ? "No devices detected" : "Устройства не обнаружены";
                             color: #bac5ce;
                             wrap: word-wrap;
                         }
@@ -84,25 +86,26 @@ slint::slint! {
                 if root.settings: VerticalLayout {
                     spacing: 12px;
                     alignment: start;
-                    Text { text: "Ориентация значка"; color: #f2f5f8; }
+                    Text { text: root.english ? "Icon orientation" : "Ориентация значка"; color: #f2f5f8; }
                     ComboBox {
-                        model: ["Обычная", "Набок влево", "Набок вправо", "Вверх ногами"];
+                        model: root.english ? ["Default", "Rotate left", "Rotate right", "Upside down"] : ["Обычная", "Набок влево", "Набок вправо", "Вверх ногами"];
                         current-index: root.orientation;
                         selected(value) => { root.set-orientation(self.current-index); }
                     }
-                    Text { text: "Стиль значка"; color: #f2f5f8; }
+                    Text { text: root.english ? "Icon style" : "Стиль значка"; color: #f2f5f8; }
                     ComboBox {
-                        model: ["Обычный", "Монохром"];
+                        model: root.english ? ["Regular", "Monochrome"] : ["Обычный", "Монохром"];
                         current-index: root.icon-style;
                         selected(value) => { root.set-style(self.current-index); }
                     }
-                    Button { text: "Открыть окно"; clicked => { root.open-details(); root.dismiss(); } }
+                    Text { text: root.english ? "Language" : "Язык"; color: #f2f5f8; }
+                    ComboBox {
+                        model: ["Русский", "English"];
+                        current-index: root.english ? 1 : 0;
+                        selected(value) => { root.set-language(self.current-index); }
+                    }
+                    Button { text: root.english ? "Open window" : "Открыть окно"; clicked => { root.open-details(); root.dismiss(); } }
                     Rectangle { vertical-stretch: 1; }
-                }
-                HorizontalLayout {
-                    spacing: 10px;
-                    Button { text: root.settings ? "Назад" : "Настройки"; clicked => { root.settings = !root.settings; } }
-                    Button { text: "Выход"; clicked => { root.quit-app(); } }
                 }
             }
         }
@@ -118,28 +121,37 @@ pub fn create(
     let sender = tx.clone();
     panel.on_open_details(move || { let _ = sender.send(Command::OpenWindow); });
     let sender = tx.clone();
-    panel.on_quit_app(move || { let _ = sender.send(Command::Quit); });
-    let sender = tx.clone();
     panel.on_set_orientation(move |index| {
         if let Some((orientation, _)) = usize::try_from(index).ok().and_then(|i| Orientation::OPTIONS.get(i)) {
             let _ = sender.send(Command::SetOrientation(*orientation));
         }
     });
+    let sender = tx.clone();
     panel.on_set_style(move |index| {
         if let Some((style, _)) = usize::try_from(index).ok().and_then(|i| Style::OPTIONS.get(i)) {
-            let _ = tx.send(Command::SetStyle(*style));
+            let _ = sender.send(Command::SetStyle(*style));
         }
+    });
+    panel.on_set_language(move |index| {
+        let language = match index {
+            0 => crate::i18n::Language::Russian,
+            1 => crate::i18n::Language::English,
+            _ => return,
+        };
+        let _ = tx.send(Command::SetLanguage(language));
     });
     Ok(panel)
 }
 
 pub fn update(panel: &TrayPanel, snapshot: &Snapshot, appearance: Appearance) {
+    let language = appearance.language;
+    panel.set_english(language == crate::i18n::Language::English);
     let rows = snapshot.visible_devices().map(|device| {
         let source = match device.reading_time() {
             Some(time) => format!("{} · {time}", device.source),
             None => device.source.clone(),
         };
-        PanelRow { id: device.id.clone().into(), name: device.name.clone().into(), value: device.label().into(), detail: device.detail.clone().into(), source: source.into() }
+        PanelRow { id: device.id.clone().into(), name: language.translate(&device.name).into(), value: language.translate(&device.label()).into(), detail: language.translate(&device.detail).into(), source: language.translate(&source).into() }
     }).collect::<Vec<_>>();
     panel.set_rows(ModelRc::from(Rc::new(VecModel::from(rows))));
     panel.set_orientation(Orientation::OPTIONS.iter().position(|(v, _)| *v == appearance.orientation).unwrap_or_default() as i32);
@@ -166,7 +178,7 @@ mod tests {
         let panel = create(sender, dismiss).unwrap();
         panel.set_panel_x(20.0);
         panel.set_panel_y(20.0);
-        panel.set_panel_width(390.0);
+        panel.set_panel_width(320.0);
         panel.set_panel_height(480.0);
         let mut device = crate::model::Device::new("probe", "ZAOPIN Z2 Max", "");
         device.reading(Some(45), None, Some(false), true, "USB HID · Compx");
@@ -188,13 +200,18 @@ mod tests {
         click(100.0, 100.0);
         assert_eq!(panel.get_expanded_id(), "probe");
         render();
-        click(100.0, 470.0);
+        click(270.0, 50.0);
         assert!(panel.get_settings());
         render();
         panel.invoke_set_orientation(1);
         assert!(matches!(commands.try_recv(), Ok(Command::SetOrientation(Orientation::Left))));
         panel.invoke_set_style(0);
         assert!(matches!(commands.try_recv(), Ok(Command::SetStyle(Style::Color))));
+        panel.invoke_set_language(1);
+        assert!(matches!(commands.try_recv(), Ok(Command::SetLanguage(crate::i18n::Language::English))));
+        let english = Appearance { language: crate::i18n::Language::English, ..Appearance::default() };
+        update(&panel, &snapshot, english);
+        assert!(panel.get_english());
         click(500.0, 100.0);
         assert!(dismissed.try_recv().is_ok());
     }
