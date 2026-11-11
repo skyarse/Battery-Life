@@ -46,7 +46,8 @@ slint::slint! {
                 padding: 14px;
                 spacing: 9px;
                 HorizontalLayout {
-                    Text { text: root.settings ? (root.english ? "Settings" : "Настройки") : "Battery Life"; color: #f2f5f8; font-size: 16px; font-weight: 600; }
+                    spacing: 8px;
+                    Text { text: root.settings ? (root.english ? "Settings" : "Настройки") : "Battery Life"; color: #f2f5f8; font-size: 16px; font-weight: 600; vertical-alignment: center; }
                     Button { text: root.settings ? (root.english ? "Back" : "Назад") : (root.english ? "Settings" : "Настройки"); clicked => { root.settings = !root.settings; } }
                     Button { text: "×"; max-width: 34px; clicked => { root.dismiss(); } }
                 }
