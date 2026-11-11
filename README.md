@@ -4,7 +4,7 @@ Wireless device battery levels in the KDE Plasma system tray on Wayland. Left-cl
 
 The **Настройки** (Settings) page contains **Открыть окно** (Open window), **Ориентация значка** (Icon orientation), and **Стиль значка** (Icon style). The Settings button is next to the panel title. A Language selector offers Russian and English. Orientation, style, and language preferences are saved between sessions. Use `--window` to open the details window at startup.
 
-The panel closes when you click outside it, press Escape, or use its close button. A right-click on the tray icon opens Plasma's context menu as a fallback.
+The panel closes when you click outside it, press Escape, or use its close button. A right-click on the tray icon opens a matching compact menu containing only Quit.
 
 Devices are checked automatically every 30 seconds. Battery Life supports dedicated protocols for the receivers listed below and discovers other wireless peripherals that expose battery information through BlueZ or UPower.
 

@@ -1,6 +1,6 @@
 [package]
 name = "battery-life"
-version = "0.1.19"
+version = "0.1.20"
 edition = "2024"
 license = "AGPL-3.0-only"
 description = "Wireless device batteries in the KDE system tray"

@@ -8,11 +8,13 @@ mod panel_ui;
 mod protocols;
 mod system;
 mod tray_icon;
+mod tray_service;
 mod ui;
 
 use anyhow::{Context, Result};
 use history::DeviceHistory;
-use ksni::{MenuItem, Tray, blocking::{Handle, TrayMethods}, menu::{RadioGroup, RadioItem, StandardItem, SubMenu}};
+use ksni::Tray;
+use tray_service::Handle;
 use model::{Device, State};
 use notifications::LowBatteryAlerts;
 use serde::Serialize;
@@ -49,8 +51,8 @@ fn scan() -> Snapshot {
 
 #[derive(Clone, Copy)]
 enum Command {
-    Refresh, OpenWindow, SaveAppearance(Appearance), SetOrientation(Orientation), SetStyle(Style), SetLanguage(i18n::Language),
-    TogglePanel(i32, i32), PanelUnavailable, Quit,
+    Refresh, OpenWindow, SetOrientation(Orientation), SetStyle(Style), SetLanguage(i18n::Language),
+    TogglePanel(i32, i32), ContextMenu(i32, i32), PanelUnavailable, Quit,
 }
 
 enum WindowEvent<'a> { Update(&'a Snapshot), Show }
@@ -60,7 +62,6 @@ struct BatteryTray {
     tx: mpsc::Sender<Command>,
     appearance: Appearance,
     icon_theme_path: String,
-    has_window: bool,
     has_panel: bool,
 }
 
@@ -71,9 +72,6 @@ impl Tray for BatteryTray {
     }
     fn id(&self) -> String { "battery-life".into() }
     fn title(&self) -> String { "Battery Life".into() }
-    fn menu_about_to_show(&mut self) {
-        let _ = self.tx.send(Command::Refresh);
-    }
     fn icon_theme_path(&self) -> String {
         self.icon_theme_path.clone()
     }
@@ -95,108 +93,6 @@ impl Tray for BatteryTray {
             ..Default::default()
         }
     }
-    fn menu(&self) -> Vec<MenuItem<Self>> {
-        let mut menu = vec![menu_text("Устройство\tЗаряд")];
-        menu.push(MenuItem::Separator);
-        let mut devices = self.snapshot.visible_devices().peekable();
-        if devices.peek().is_none() {
-            menu.push(menu_text(NO_DEVICES));
-        }
-        for device in devices {
-            let mut details = vec![menu_text(&device.detail)];
-            if !device.source.is_empty() {
-                details.push(menu_text(format!("Источник: {}", device.source)));
-            }
-            if let Some(reading_time) = device.reading_time() {
-                details.push(menu_text(format!("Последний ответ · {reading_time}")));
-            }
-            menu.push(SubMenu {
-                // KDE's Qt menu renders text after a tab in its right-hand column.
-                label: format!("{}\t{}", device.name, device.label()),
-                submenu: details,
-                ..Default::default()
-            }.into());
-        }
-        menu.push(MenuItem::Separator);
-        menu.push(SubMenu {
-            label: "Настройки".into(),
-            submenu: self.settings_menu(),
-            ..Default::default()
-        }.into());
-        menu.push(command_item("Выход", Command::Quit));
-        translate_menu(&mut menu, self.appearance.language);
-        menu
-    }
-}
-
-impl BatteryTray {
-    fn settings_menu(&self) -> Vec<MenuItem<Self>> {
-        let mut menu = Vec::new();
-        if self.has_window {
-            menu.push(command_item("Открыть окно", Command::OpenWindow));
-        }
-        let options = Orientation::OPTIONS;
-        menu.push(SubMenu {
-            label: "Ориентация значка\t  ".into(),
-            submenu: vec![RadioGroup {
-                selected: options.iter().position(|(value, _)| *value == self.appearance.orientation).unwrap_or_default(),
-                select: Box::new(|tray: &mut Self, index| {
-                    let (orientation, _) = Orientation::OPTIONS[index];
-                    tray.appearance.orientation = orientation;
-                    let _ = tray.tx.send(Command::SaveAppearance(tray.appearance));
-                }),
-                options: options.into_iter().map(|(_, label)| RadioItem { label: label.into(), ..Default::default() }).collect(),
-            }.into()],
-            ..Default::default()
-        }.into());
-        let styles = Style::OPTIONS;
-        menu.push(SubMenu {
-            label: "Стиль значка\t  ".into(),
-            submenu: vec![RadioGroup {
-                selected: styles.iter().position(|(value, _)| *value == self.appearance.style).unwrap_or_default(),
-                select: Box::new(|tray: &mut Self, index| {
-                    let (style, _) = Style::OPTIONS[index];
-                    tray.appearance.style = style;
-                    let _ = tray.tx.send(Command::SaveAppearance(tray.appearance));
-                }),
-                options: styles.into_iter().map(|(_, label)| RadioItem { label: label.into(), ..Default::default() }).collect(),
-            }.into()],
-            ..Default::default()
-        }.into());
-        menu
-    }
-}
-
-fn translate_menu(menu: &mut [MenuItem<BatteryTray>], language: i18n::Language) {
-    for item in menu {
-        match item {
-            MenuItem::Standard(item) => item.label = language.translate(&item.label),
-            MenuItem::SubMenu(item) => {
-                item.label = language.translate(&item.label);
-                translate_menu(&mut item.submenu, language);
-            }
-            MenuItem::RadioGroup(group) => for option in &mut group.options {
-                option.label = language.translate(&option.label);
-            },
-            _ => {}
-        }
-    }
-}
-
-fn command_item(label: &str, command: Command) -> MenuItem<BatteryTray> {
-    StandardItem {
-        label: label.into(),
-        activate: Box::new(move |tray: &mut BatteryTray| { let _ = tray.tx.send(command); }),
-        ..Default::default()
-    }.into()
-}
-
-fn menu_text(label: impl AsRef<str>) -> MenuItem<BatteryTray> {
-    StandardItem {
-        label: label.as_ref().replace('_', "__"),
-        enabled: false,
-        ..Default::default()
-    }.into()
 }
 
 fn main() {
@@ -240,11 +136,10 @@ fn run() -> Result<()> {
             false
         }
     };
-    let handle = BatteryTray {
+    let handle = tray_service::spawn(BatteryTray {
         snapshot: initial, tx: tx.clone(), appearance: Appearance::load(),
-        icon_theme_path: tray_icon::theme_path(), has_window, has_panel: true,
-    }
-        .spawn()
+        icon_theme_path: tray_icon::theme_path(), has_panel: true,
+    }, instance.clone())
         .context("Не удалось создать значок в трее KDE")?;
     if !has_window {
         monitor(handle, rx, instance, |_| {});
@@ -279,7 +174,7 @@ fn run() -> Result<()> {
 }
 
 fn monitor(
-    handle: Handle<BatteryTray>,
+    handle: Handle,
     rx: mpsc::Receiver<Command>,
     session: Connection,
     window_event: impl Fn(WindowEvent<'_>),
@@ -320,12 +215,14 @@ fn monitor(
                     panel.send(panel::Message::Toggle(x, y));
                     break;
                 }
+                Ok(Command::ContextMenu(x, y)) => {
+                    panel.send(panel::Message::ContextMenu(x, y));
+                }
                 Ok(Command::PanelUnavailable) => {
                     let _ = handle.update(|tray| tray.has_panel = false);
                 }
-                Ok(command @ (Command::SaveAppearance(_) | Command::SetOrientation(_) | Command::SetStyle(_) | Command::SetLanguage(_))) => {
+                Ok(command @ (Command::SetOrientation(_) | Command::SetStyle(_) | Command::SetLanguage(_))) => {
                     match command {
-                        Command::SaveAppearance(value) => appearance = value,
                         Command::SetOrientation(value) => appearance.orientation = value,
                         Command::SetStyle(value) => appearance.style = value,
                         Command::SetLanguage(value) => appearance.language = value,

@@ -24,6 +24,7 @@ use wayland_client::{
 
 pub enum Message {
     Toggle(i32, i32),
+    ContextMenu(i32, i32),
     Update(Snapshot, Appearance),
     Quit,
 }
@@ -99,10 +100,17 @@ fn run(tx: mpsc::Sender<Command>, receiver: mpsc::Receiver<Message>) -> Result<(
             match message {
                 Message::Quit => return Ok(()),
                 Message::Update(snapshot, appearance) => panel_ui::update(&state.ui, &snapshot, appearance),
+                Message::ContextMenu(x, y) => {
+                    state.close();
+                    state.ui.set_exit_menu(true);
+                    state.open(&qh, x, y)?;
+                }
                 Message::Toggle(x, y) => {
-                    if state.layer.is_some() {
+                    if state.layer.is_some() && !state.ui.get_exit_menu() {
                         state.close();
                     } else {
+                        state.close();
+                        state.ui.set_exit_menu(false);
                         state.open(&qh, x, y)?;
                     }
                 }
@@ -180,10 +188,13 @@ impl State {
     }
 
     fn update_geometry(&self) {
-        let (px, py, panel_width, panel_height) = popup_geometry(
-            self.output_size, (self.width as i32, self.height as i32),
-            self.position, self.ui.get_desired_height().ceil() as i32,
-        );
+        let desired_height = self.ui.get_desired_height().ceil() as i32;
+        let available = (self.width as i32, self.height as i32);
+        let (px, py, panel_width, panel_height) = if self.ui.get_exit_menu() {
+            popup_geometry_with_width(self.output_size, available, self.position, desired_height, 144)
+        } else {
+            popup_geometry(self.output_size, available, self.position, desired_height)
+        };
         self.ui.set_panel_x(px as f32);
         self.ui.set_panel_y(py as f32);
         self.ui.set_panel_width(panel_width as f32);
@@ -294,6 +305,10 @@ fn plasma_uses_native_coordinates() -> bool {
 }
 
 fn popup_geometry(output: (i32, i32), available: (i32, i32), position: (i32, i32), desired_height: i32) -> (i32, i32, i32, i32) {
+    popup_geometry_with_width(output, available, position, desired_height, 288)
+}
+
+fn popup_geometry_with_width(output: (i32, i32), available: (i32, i32), position: (i32, i32), desired_height: i32, preferred_width: i32) -> (i32, i32, i32, i32) {
     let (width, height) = (available.0.max(1), available.1.max(1));
     let reserved_x = (output.0 - width).max(0);
     let reserved_y = (output.1 - height).max(0);
@@ -301,7 +316,7 @@ fn popup_geometry(output: (i32, i32), available: (i32, i32), position: (i32, i32
     let at_left = position.0 < output.0 / 2;
     let local_x = (position.0 - if at_left { reserved_x } else { 0 }).clamp(0, width);
     let local_y = (position.1 - if at_top { reserved_y } else { 0 }).clamp(0, height);
-    let panel_width = 288.min(width.saturating_sub(16)).max(1);
+    let panel_width = preferred_width.min(width.saturating_sub(16)).max(1);
     let panel_height = desired_height.min(height.saturating_sub(16)).max(1);
     let horizontal_panel = if reserved_y > 0 {
         true

@@ -21,10 +21,12 @@ slint::slint! {
         in property <int> orientation;
         in property <int> icon-style;
         in property <bool> english;
-        out property <length> desired-height: root.settings ? 370px : min(560px, 82px + root.rows.length * 54px + (root.expanded-id != "" ? 90px : 0px));
+        in-out property <bool> exit-menu: false;
+        out property <length> desired-height: root.exit-menu ? 58px : root.settings ? 370px : min(560px, 82px + root.rows.length * 54px + (root.expanded-id != "" ? 90px : 0px));
         in-out property <bool> settings: false;
         in-out property <string> expanded-id;
         callback dismiss();
+        callback quit();
         callback open-details();
         callback set-language(int);
         callback set-orientation(int);
@@ -42,7 +44,23 @@ slint::slint! {
             border-color: #5a6673;
             // Consume background clicks so only clicks outside this panel dismiss it.
             TouchArea {}
-            VerticalLayout {
+            if root.exit-menu: Rectangle {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: parent.height - 16px;
+                border-radius: 6px;
+                background: quit-target.has-hover ? #354452 : #2a3540;
+                Text {
+                    text: root.english ? "Quit" : "Выход";
+                    color: #f2f5f8;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                quit-target := TouchArea { clicked => { root.quit(); root.dismiss(); } }
+            }
+            if !root.exit-menu: VerticalLayout {
                 padding: 14px;
                 spacing: 9px;
                 HorizontalLayout {
@@ -121,6 +139,8 @@ pub fn create(
 ) -> anyhow::Result<TrayPanel> {
     let panel = TrayPanel::new()?;
     panel.on_dismiss(move || { let _ = dismiss.send(()); });
+    let sender = tx.clone();
+    panel.on_quit(move || { let _ = sender.send(Command::Quit); });
     let sender = tx.clone();
     panel.on_open_details(move || { let _ = sender.send(Command::OpenWindow); });
     let sender = tx.clone();
@@ -222,6 +242,14 @@ mod tests {
         click(230.0, 50.0);
         assert!(panel.get_settings());
         click(500.0, 100.0);
+        assert!(dismissed.try_recv().is_ok());
+        panel.set_exit_menu(true);
+        panel.set_panel_width(144.0);
+        panel.set_panel_height(58.0);
+        assert_eq!(panel.get_desired_height(), 58.0);
+        render();
+        click(80.0, 48.0);
+        assert!(matches!(commands.try_recv(), Ok(Command::Quit)));
         assert!(dismissed.try_recv().is_ok());
     }
 }
