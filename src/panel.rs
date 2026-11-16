@@ -3,23 +3,25 @@ use anyhow::{Context, Result};
 use slint::{
     ComponentHandle, LogicalPosition, PhysicalSize,
     platform::{Platform, PlatformError, WindowAdapter, WindowEvent, PointerEventButton,
-        software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType}},
+        software_renderer::{LineBufferProvider, MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType, SoftwareRenderer}},
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
-    delegate_seat, delegate_shm,
+    delegate_seat, delegate_shm, delegate_subcompositor,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState}, registry_handlers,
     reexports::{calloop::EventLoop, calloop_wayland_source::WaylandSource},
     seat::{Capability, SeatHandler, SeatState, pointer::{PointerEvent, PointerEventKind, PointerHandler}},
     shell::{WaylandSurface, wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface, LayerSurfaceConfigure}},
-    shm::{Shm, ShmHandler, slot::SlotPool},
+    shm::{Shm, ShmHandler, slot::{Buffer, SlotPool}},
+    subcompositor::SubcompositorState,
+    reexports::protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter},
 };
 use std::{rc::Rc, sync::mpsc, time::Duration};
 use wayland_client::{
     Connection, Dispatch, QueueHandle, WEnum, globals::registry_queue_init,
-    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface, wl_subsurface::WlSubsurface},
 };
 
 pub enum Message {
@@ -74,14 +76,18 @@ fn run(tx: mpsc::Sender<Command>, receiver: mpsc::Receiver<Message>) -> Result<(
     let compositor = CompositorState::bind(&globals, &qh)?;
     let shell = LayerShell::bind(&globals, &qh).context("The compositor does not support layer-shell")?;
     let shm = Shm::bind(&globals, &qh)?;
-    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    let subcompositor = SubcompositorState::bind(compositor.wl_compositor().clone(), &globals, &qh)?;
+    let viewporter: WpViewporter = globals.bind(&qh, 1..=1, ())
+        .context("The compositor does not support viewporter")?;
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(SoftwarePlatform(window.clone())))?;
     let (dismiss, dismiss_rx) = mpsc::channel();
     let ui = panel_ui::create(tx, dismiss)?;
     let mut state = State {
         registry: RegistryState::new(&globals), outputs: OutputState::new(&globals, &qh),
         seats: SeatState::new(&globals, &qh), shm,
-        compositor, shell, layer: None, window, ui, pool: None, pixels: Vec::new(),
+        compositor, shell, subcompositor, viewporter, viewport: None, child: None,
+        layer: None, window, ui, pool: None, background_attached: false, panel_geometry: None, focus_lost: false, frame_pending: false,
         pointer: None, keyboard: None, configured: false, width: 1, height: 1,
         scale: 1, position: (0, 0), output_size: (1, 1),
     };
@@ -91,6 +97,10 @@ fn run(tx: mpsc::Sender<Command>, receiver: mpsc::Receiver<Message>) -> Result<(
     loop {
         let wait = if state.layer.is_some() { 16 } else { 160 };
         event_loop.dispatch(Duration::from_millis(wait), &mut state)?;
+        if state.focus_lost {
+            state.window.dispatch_event(WindowEvent::WindowActiveChanged(false));
+            state.close();
+        }
         loop {
             let message = match receiver.try_recv() {
                 Ok(message) => message,
@@ -120,7 +130,7 @@ fn run(tx: mpsc::Sender<Command>, receiver: mpsc::Receiver<Message>) -> Result<(
             state.close();
         }
         slint::platform::update_timers_and_animations();
-        state.draw()?;
+        state.draw(&qh)?;
         connection.flush()?;
     }
 }
@@ -136,7 +146,14 @@ struct State {
     window: Rc<MinimalSoftwareWindow>,
     ui: panel_ui::TrayPanel,
     pool: Option<SlotPool>,
-    pixels: Vec<PremultipliedRgbaColor>,
+    subcompositor: SubcompositorState,
+    viewporter: WpViewporter,
+    viewport: Option<WpViewport>,
+    child: Option<PanelSurface>,
+    background_attached: bool,
+    panel_geometry: Option<(i32, i32, i32, i32)>,
+    focus_lost: bool,
+    frame_pending: bool,
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     configured: bool,
@@ -170,24 +187,29 @@ impl State {
         self.output_size = (width, height);
         self.ui.set_settings(false);
         self.ui.set_expanded_id("".into());
-        self.update_geometry();
         self.window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: self.scale as f32 });
-        self.window.set_size(PhysicalSize::new(self.width*self.scale as u32, self.height*self.scale as u32));
-        self.ui.show()?;
         let surface = self.compositor.create_surface(qh);
-        surface.set_buffer_scale(self.scale);
+        let viewport = self.viewporter.get_viewport(&surface, qh, ());
+        viewport.set_destination(self.width as i32, self.height as i32);
         let layer = self.shell.create_layer_surface(qh, surface, Layer::Overlay, Some("battery-life-panel"), Some(&output));
         layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
         layer.set_size(0, 0);
         layer.set_exclusive_zone(0);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
-        layer.commit();
+        let (subsurface, surface) = self.subcompositor.create_subsurface(layer.wl_surface().clone(), qh);
+        surface.set_buffer_scale(self.scale);
+        self.child = Some(PanelSurface { subsurface, surface });
+        self.viewport = Some(viewport);
         self.layer = Some(layer);
         self.configured = false;
+        self.panel_geometry = None;
+        self.update_geometry();
+        self.ui.show()?;
+        self.layer.as_ref().unwrap().commit();
         Ok(())
     }
 
-    fn update_geometry(&self) {
+    fn update_geometry(&mut self) {
         let desired_height = self.ui.get_desired_height().ceil() as i32;
         let available = (self.width as i32, self.height as i32);
         let (px, py, panel_width, panel_height) = if self.ui.get_exit_menu() {
@@ -195,39 +217,106 @@ impl State {
         } else {
             popup_geometry(self.output_size, available, self.position, desired_height)
         };
-        self.ui.set_panel_x(px as f32);
-        self.ui.set_panel_y(py as f32);
+        if self.panel_geometry == Some((px, py, panel_width, panel_height)) { return; }
+        self.panel_geometry = Some((px, py, panel_width, panel_height));
+        self.ui.set_panel_x(0.0);
+        self.ui.set_panel_y(0.0);
         self.ui.set_panel_width(panel_width as f32);
         self.ui.set_panel_height(panel_height as f32);
+        self.window.set_size(PhysicalSize::new(panel_width as u32 * self.scale as u32, panel_height as u32 * self.scale as u32));
+        self.ui.window().request_redraw();
     }
 
     fn close(&mut self) {
+        self.child.take();
+        if let Some(viewport) = self.viewport.take() { viewport.destroy(); }
         self.layer.take();
+        self.pool.take();
+        self.focus_lost = false;
+        self.frame_pending = false;
+        self.background_attached = false;
+        self.panel_geometry = None;
         self.configured = false;
         let _ = self.ui.hide();
     }
 
-    fn draw(&mut self) -> Result<()> {
+    fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
+        if !self.configured { return Ok(()); }
         self.update_geometry();
-        let Some(layer) = self.layer.as_ref().filter(|_| self.configured) else { return Ok(()); };
-        let (width, height) = (self.width*self.scale as u32, self.height*self.scale as u32);
-        self.pixels.resize((width as usize)*(height as usize), PremultipliedRgbaColor::default());
-        let rendered = self.window.draw_if_needed(|renderer| {
-            renderer.render(&mut self.pixels, width as usize);
-        });
-        if !rendered { return Ok(()); }
-        if self.pool.is_none() {
-            self.pool = Some(SlotPool::new(self.pixels.len()*4, &self.shm)?);
+        if self.frame_pending { return Ok(()); }
+        let Some(layer) = &self.layer else { return Ok(()); };
+        let Some(child) = &self.child else { return Ok(()); };
+        if self.pool.is_none() { self.pool = Some(SlotPool::new(64, &self.shm)?); }
+        let pool = self.pool.as_mut().unwrap();
+        let background_changed = !self.background_attached;
+        if background_changed {
+            let (buffer, canvas) = pool.create_buffer(1, 1, 4, wl_shm::Format::Argb8888)?;
+            canvas.fill(0);
+            layer.wl_surface().damage_buffer(0, 0, 1, 1);
+            buffer.attach_to(layer.wl_surface())?;
+            self.background_attached = true;
         }
-        let (buffer, canvas) = self.pool.as_mut().unwrap()
-            .create_buffer(width as i32, height as i32, width as i32*4, wl_shm::Format::Argb8888)?;
-        for (target, pixel) in canvas.chunks_exact_mut(4).zip(&self.pixels) {
+        let size = self.window.size();
+        let mut frame = None;
+        self.window.draw_if_needed(|renderer| {
+            frame = Some(render_frame(renderer, pool, size));
+        });
+        if let Some(buffer) = frame.transpose()? {
+            let (px, py, _, _) = self.panel_geometry.unwrap();
+            child.subsurface.set_position(px, py);
+            child.surface.frame(qh, child.surface.clone());
+            self.frame_pending = true;
+            child.surface.damage_buffer(0, 0, size.width as i32, size.height as i32);
+            buffer.attach_to(&child.surface)?;
+            child.surface.commit();
+            layer.commit();
+        } else if background_changed {
+            layer.commit();
+        }
+        Ok(())
+    }
+}
+
+struct PanelSurface {
+    subsurface: WlSubsurface,
+    surface: wl_surface::WlSurface,
+}
+
+impl Drop for PanelSurface {
+    fn drop(&mut self) {
+        self.subsurface.destroy();
+        self.surface.destroy();
+    }
+}
+
+fn render_frame(renderer: &SoftwareRenderer, pool: &mut SlotPool, size: PhysicalSize) -> Result<Buffer> {
+    let (buffer, canvas) = pool.create_buffer(size.width as i32, size.height as i32, size.width as i32 * 4, wl_shm::Format::Argb8888)?;
+    render_argb(renderer, canvas, size.width as usize);
+    Ok(buffer)
+}
+
+pub(crate) fn render_argb(renderer: &SoftwareRenderer, canvas: &mut [u8], width: usize) {
+    renderer.render_by_line(ShmLines { canvas, width, line: vec![PremultipliedRgbaColor::default(); width] });
+}
+
+struct ShmLines<'a> {
+    canvas: &'a mut [u8],
+    width: usize,
+    line: Vec<PremultipliedRgbaColor>,
+}
+
+impl LineBufferProvider for ShmLines<'_> {
+    type TargetPixel = PremultipliedRgbaColor;
+
+    fn process_line(&mut self, line: usize, range: std::ops::Range<usize>, render: impl FnOnce(&mut [Self::TargetPixel])) {
+        let scratch = &mut self.line[..range.len()];
+        scratch.fill(PremultipliedRgbaColor::default());
+        render(scratch);
+        let start = (line * self.width + range.start) * 4;
+        let end = (line * self.width + range.end) * 4;
+        for (target, pixel) in self.canvas[start..end].chunks_exact_mut(4).zip(scratch) {
             target.copy_from_slice(&[pixel.blue, pixel.green, pixel.red, pixel.alpha]);
         }
-        layer.wl_surface().damage_buffer(0, 0, width as i32, height as i32);
-        buffer.attach_to(layer.wl_surface())?;
-        layer.commit();
-        Ok(())
     }
 }
 
@@ -424,23 +513,29 @@ impl LayerShellHandler for State {
         if configure.new_size.0 > 0 && configure.new_size.1 > 0 {
             self.width = configure.new_size.0;
             self.height = configure.new_size.1;
-            self.window.set_size(PhysicalSize::new(self.width*self.scale as u32, self.height*self.scale as u32));
+            if let Some(viewport) = &self.viewport { viewport.set_destination(self.width as i32, self.height as i32); }
         }
+        self.ui.window().request_redraw();
         self.configured = true;
     }
 }
 
 impl CompositorHandler for State {
     fn scale_factor_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface, scale: i32) {
-        if self.layer.as_ref().is_some_and(|layer| layer.wl_surface() == surface) {
+        if self.layer.as_ref().is_some_and(|layer| layer.wl_surface() == surface)
+            || self.child.as_ref().is_some_and(|child| &child.surface == surface)
+        {
             self.scale = scale.max(1);
-            surface.set_buffer_scale(self.scale);
+            if let Some(child) = &self.child { child.surface.set_buffer_scale(self.scale); }
             self.window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: self.scale as f32 });
-            self.window.set_size(PhysicalSize::new(self.width*self.scale as u32, self.height*self.scale as u32));
+            self.panel_geometry = None;
+            self.update_geometry();
         }
     }
     fn transform_changed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: wl_output::Transform) {}
-    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
+    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, surface: &wl_surface::WlSurface, _: u32) {
+        if self.child.as_ref().is_some_and(|child| &child.surface == surface) { self.frame_pending = false; }
+    }
     fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
     fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
 }
@@ -472,7 +567,11 @@ impl SeatHandler for State {
 impl PointerHandler for State {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
         for event in events {
-            if !self.layer.as_ref().is_some_and(|layer| layer.wl_surface() == &event.surface) { continue; }
+            if self.layer.as_ref().is_some_and(|layer| layer.wl_surface() == &event.surface) {
+                if matches!(event.kind, PointerEventKind::Release { .. }) { self.close(); }
+                continue;
+            }
+            if !self.child.as_ref().is_some_and(|child| child.surface == event.surface) { continue; }
             let position = LogicalPosition::new(event.position.0 as f32, event.position.1 as f32);
             let input = match event.kind {
                 PointerEventKind::Enter { .. } | PointerEventKind::Motion { .. } => WindowEvent::PointerMoved { position },
@@ -493,6 +592,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         match event {
             wl_keyboard::Event::Key { key: 1, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } => state.close(),
             wl_keyboard::Event::Enter { surface, .. } if state.layer.as_ref().is_some_and(|layer| layer.wl_surface() == &surface) => {
+                state.focus_lost = false;
                 state.window.dispatch_event(WindowEvent::WindowActiveChanged(true));
                 if let Some(layer) = &state.layer {
                     layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
@@ -500,8 +600,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } if state.layer.as_ref().is_some_and(|layer| layer.wl_surface() == &surface) => {
-                state.window.dispatch_event(WindowEvent::WindowActiveChanged(false));
-                state.close();
+                state.focus_lost = true;
             }
             wl_keyboard::Event::Key { key, state: WEnum::Value(key_state), .. } => {
                 use slint::platform::Key;
@@ -530,3 +629,7 @@ delegate_seat!(State);
 delegate_pointer!(State);
 delegate_layer!(State);
 delegate_registry!(State);
+
+delegate_subcompositor!(State);
+wayland_client::delegate_noop!(State: ignore WpViewporter);
+wayland_client::delegate_noop!(State: ignore WpViewport);

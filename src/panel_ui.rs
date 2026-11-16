@@ -252,5 +252,49 @@ mod tests {
         assert!(matches!(commands.try_recv(), Ok(Command::Quit)));
         assert!(dismissed.try_recv().is_ok());
     }
+
+    #[test]
+    fn scanline_render_matches_full_buffer_for_pages_languages_and_scales() {
+        let surface = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(TestPlatform(surface.clone()))).unwrap();
+        let (sender, _) = mpsc::channel();
+        let (dismiss, _) = mpsc::channel();
+        let panel = create(sender, dismiss).unwrap();
+        let mut device = crate::model::Device::new("probe", "ZAOPIN Z2 Max", "");
+        device.reading(Some(45), None, Some(false), true, "USB HID · Compx");
+        let snapshot = Snapshot { version: "test", checked_at: 0, devices: vec![device], warnings: vec![] };
+        update(&panel, &snapshot, Appearance::default());
+        panel.show().unwrap();
+        for english in [false, true] {
+            panel.set_english(english);
+            for scale in [1.0_f32, 1.25, 2.0] {
+                surface.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: scale });
+                for page in ["devices", "expanded", "settings", "quit"] {
+                    panel.set_settings(page == "settings");
+                    panel.set_exit_menu(page == "quit");
+                    panel.set_expanded_id(if page == "expanded" { "probe".into() } else { "".into() });
+                    let width = if page == "quit" { 144.0 } else { 288.0 };
+                    let height = panel.get_desired_height();
+                    panel.set_panel_width(width);
+                    panel.set_panel_height(height);
+                    let (width, height) = ((width * scale).round() as usize, (height * scale).round() as usize);
+                    surface.set_size(PhysicalSize::new(width as u32, height as u32));
+                    panel.window().request_redraw();
+                    slint::platform::update_timers_and_animations();
+                    assert!(surface.draw_if_needed(|renderer| {
+                        let mut full = vec![PremultipliedRgbaColor::default(); width * height];
+                        renderer.render(&mut full, width);
+                        let mut streamed = vec![0; width * height * 4];
+                        crate::panel::render_argb(renderer, &mut streamed, width);
+                        for (index, (pixel, actual)) in full.iter().zip(streamed.chunks_exact(4)).enumerate() {
+                            assert_eq!([pixel.blue, pixel.green, pixel.red, pixel.alpha].as_slice(), actual,
+                                "page={page}, scale={scale}, english={english}, pixel={index}");
+                        }
+                    }));
+                }
+            }
+        }
+    }
+
 }
 

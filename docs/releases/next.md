@@ -1,4 +1,8 @@
 ### Changed
 
-- Desktop low-battery notifications now start at 25% or below; the tray warning threshold remains at 15%.
-- Stable release versions are assigned automatically by CI.
+- Reduced popup memory usage with panel-sized Wayland buffers and scanline rendering.
+
+### Fixed
+
+- Released popup drawing buffers when the menu closes.
+- Preserved popup and dropdown interaction during temporary keyboard focus transitions.
