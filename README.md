@@ -12,6 +12,8 @@ Only devices detected at least once appear in the list. Disconnected devices ret
 
 At 15% or below, or when a device reports a low or critical level, Battery Life displays a tray warning and sends a desktop notification. Reminders repeat approximately once per hour while fresh readings remain low. Charging or recovery to 25% resets the reminder timer.
 
+**Unreleased:** Desktop notifications start at 25% or below. Charging or recovery above 25% resets the reminder timer. The tray warning threshold remains at 15%.
+
 ## Running on Fedora KDE
 
 1. Download **Battery-Life-x86_64.AppImage** from the [latest release](https://github.com/skyarse/Battery-Life/releases/latest).

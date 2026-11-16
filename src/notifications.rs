@@ -2,7 +2,7 @@ use crate::model::{Device, State};
 use std::{collections::HashMap, time::{Duration, Instant}};
 use zbus::{blocking::Connection, zvariant::Value};
 
-const RECOVERY_PERCENT: u8 = 25;
+const NOTIFICATION_PERCENT: u8 = 25;
 const REMINDER_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Default)]
@@ -28,7 +28,7 @@ impl LowBatteryAlerts {
 
             // Keep the reminder timer through small fluctuations near the threshold.
             let recovered = device.charging == Some(true)
-                || device.percent.is_some_and(|percent| percent >= RECOVERY_PERCENT)
+                || device.percent.is_some_and(|percent| percent > NOTIFICATION_PERCENT)
                 || matches!(device.level.as_deref(), Some("Средний" | "Высокий" | "Полный"));
             if recovered {
                 self.last_notified.remove(&device.id);
@@ -36,7 +36,10 @@ impl LowBatteryAlerts {
 
             let due = self.last_notified.get(&device.id)
                 .is_none_or(|last| now.saturating_duration_since(*last) >= REMINDER_INTERVAL);
-            if device.is_low_battery() && due {
+            let low = device.charging != Some(true)
+                && (device.percent.is_some_and(|percent| percent <= NOTIFICATION_PERCENT)
+                    || device.is_low_battery());
+            if low && due {
                 match notify(device) {
                     Ok(()) => { self.last_notified.insert(device.id.clone(), now); }
                     Err(error) => eprintln!("Не удалось отправить уведомление для {}: {error}", device.name),
@@ -69,6 +72,37 @@ fn send(session: &Connection, device: &Device) -> zbus::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alerts_start_at_twenty_five_without_repeating_on_each_poll() {
+        let mut alerts = LowBatteryAlerts::default();
+        let mut device = Device::new("mouse", "Mouse", "");
+        let start = Instant::now();
+        let mut sent = 0;
+        for (elapsed, percent, charging, state, expected) in [
+            (0, 26, false, State::Ready, 0),
+            (1, 25, false, State::Stale, 0),
+            (2, 25, true, State::Ready, 0),
+            (3, 25, false, State::Ready, 1),
+            (4, 25, false, State::Ready, 1),
+            (5, 24, false, State::Ready, 1),
+            (3602, 25, false, State::Ready, 1),
+            (3603, 25, false, State::Ready, 2),
+            (3604, 26, false, State::Ready, 2),
+            (3605, 25, false, State::Ready, 3),
+        ] {
+            device.reading(Some(percent), None, Some(charging), false, "test");
+            device.state = state;
+            if percent == 25 {
+                assert!(!device.is_low_battery());
+            }
+            alerts.check(std::slice::from_ref(&device), start + Duration::from_secs(elapsed), |_| {
+                sent += 1;
+                Ok(())
+            });
+            assert_eq!(sent, expected, "at {elapsed} seconds");
+        }
+    }
 
     #[test]
     fn reminders_repeat_hourly_with_fresh_readings_and_reset_after_charging() {
