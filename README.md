@@ -10,9 +10,7 @@ Devices are checked automatically every 30 seconds. Battery Life supports dedica
 
 Only devices detected at least once appear in the list. Disconnected devices retain their last known charge, marked as disconnected. If a receiver is present but the device does not respond, the saved reading is marked as stale. History persists in `$XDG_STATE_HOME/battery-life/devices.json`, which defaults to `~/.local/state/battery-life/devices.json`.
 
-At 15% or below, or when a device reports a low or critical level, Battery Life displays a tray warning and sends a desktop notification. Reminders repeat approximately once per hour while fresh readings remain low. Charging or recovery to 25% resets the reminder timer.
-
-**Unreleased:** Desktop notifications start at 25% or below. Charging or recovery above 25% resets the reminder timer. The tray warning threshold remains at 15%.
+Tray warnings appear at 15% or below, or when a device reports a low or critical level. From v0.1.21, desktop notifications start at 25% or below; v0.1.20 uses 15%. Low or critical device-reported levels also trigger notifications. Reminders repeat approximately once per hour while fresh readings remain low. Charging or recovery above 25% resets the reminder timer from v0.1.21.
 
 ## Running on Fedora KDE
 
@@ -64,6 +62,6 @@ cargo run --locked -- --diagnose
 cargo run --locked
 ```
 
-GitHub Actions builds and smoke-tests the x86_64 AppImage. A successful build on `main` publishes the package version from `Cargo.toml` with a checksum and `.zsync` update metadata.
+GitHub Actions builds and smoke-tests the x86_64 AppImage. A successful release build on `main` assigns the next patch version from the latest stable release, builds the AppImage with that version, and publishes it with a checksum and `.zsync` update metadata. Repeating the same published commit keeps its existing release version.
 
-For a new release, increase the package version, update `Cargo.lock`, and add an English `docs/releases/v<version>.md` file. Group release notes under **Added**, **Changed**, and **Fixed**, using the sections that apply. The release workflow publishes these notes and synchronizes the descriptions of existing releases.
+For a new release, update the English notes in `docs/releases/next.md` on `dev`, validate the changes, and merge `dev` into `main` with a merge commit. CI prepares the application version and versioned release notes in its build checkout; no manual version bump or tag is needed. Group release notes under **Added**, **Changed**, **Fixed**, and **Removed**, using the sections that apply. The release workflow publishes these notes and synchronizes the descriptions of existing versioned release notes.
