@@ -26,6 +26,40 @@ jobs:
           sudo apt-get install -y --no-install-recommends desktop-file-utils libfontconfig1-dev squashfs-tools zsync
           rustup toolchain install 1.99.1 --profile minimal
           rustup default 1.99.1
+      - name: Prepare release version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          battery_previous_tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName')
+          battery_previous_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$battery_previous_tag" --jq '.sha')
+          export BATTERY_PREVIOUS_TAG="$battery_previous_tag" BATTERY_PREVIOUS_COMMIT="$battery_previous_commit"
+          python3 - <<'PYTHON'
+          import os, re, shutil, tomllib
+          from pathlib import Path
+
+          previous_tag = os.environ["BATTERY_PREVIOUS_TAG"]
+          assert re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", previous_tag), "Expected a stable release tag"
+          assert re.fullmatch(r"[0-9a-f]{40}", os.environ["BATTERY_PREVIOUS_COMMIT"]), "Expected a release commit"
+          previous = tuple(map(int, previous_tag[1:].split(".")))
+          cargo_path, lock_path = Path("Cargo.toml"), Path("Cargo.lock")
+          cargo, lock = cargo_path.read_text(), lock_path.read_text()
+          current = tuple(map(int, tomllib.loads(cargo)["package"]["version"].split(".")))
+          candidate = max(current, (previous[0], previous[1], previous[2] + 1))
+          version = ".".join(map(str, previous if os.environ["BATTERY_PREVIOUS_COMMIT"] == os.environ["GITHUB_SHA"] else candidate))
+          updated_cargo, cargo_count = re.subn(r'(?m)^version = "[^"\n]+"$', f'version = "{version}"', cargo, count=1)
+          updated_lock, lock_count = re.subn(r'(\[\[package\]\]\nname = "battery-life"\nversion = ")[^"]+("\n)', lambda match: match[1] + version + match[2], lock, count=1)
+          assert cargo_count == lock_count == 1, "Expected exactly one application version"
+          assert tomllib.loads(updated_cargo)["package"]["version"] == version
+          old_dependencies = [item for item in tomllib.loads(lock)["package"] if item["name"] != "battery-life"]
+          new_dependencies = [item for item in tomllib.loads(updated_lock)["package"] if item["name"] != "battery-life"]
+          assert old_dependencies == new_dependencies, "Dependency versions must remain unchanged"
+          cargo_path.write_text(updated_cargo)
+          lock_path.write_text(updated_lock)
+          shutil.copyfile("docs/releases/next.md", f"docs/releases/v{version}.md")
+          print(f"Prepared Battery Life v{version}")
+          PYTHON
       - name: Test and build
         run: |
           cargo test --release --locked
