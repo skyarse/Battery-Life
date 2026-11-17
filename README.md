@@ -14,7 +14,7 @@ Tray warnings appear at 15% or below, or when a device reports a low or critical
 
 Low-battery notifications request the system `battery-low` sound. Playback follows the desktop sound theme, notification volume, and Do Not Disturb settings; the sound is not played separately by Battery Life.
 
-Unreleased (`dev`): Settings includes **Тест уведомления** (Test notification), which sends a localized test notification with the same sound request, even when no devices are connected. Testing does not change the low-battery reminder timer.
+Settings includes **Тест уведомления** (Test notification), which sends a localized test notification with the same sound request, even when no devices are connected. Testing does not change the low-battery reminder timer.
 
 ## Running on Fedora KDE
 
