@@ -1,3 +1,3 @@
 ### Added
 
-- System low-battery sound for desktop notifications, respecting the desktop notification and sound settings.
+- Test notification button in Settings to check desktop notifications and the low-battery sound without a connected device or changes to reminder timing.
