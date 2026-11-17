@@ -51,7 +51,7 @@ fn scan() -> Snapshot {
 
 #[derive(Clone, Copy)]
 enum Command {
-    Refresh, OpenWindow, SetOrientation(Orientation), SetStyle(Style), SetLanguage(i18n::Language),
+    Refresh, OpenWindow, TestNotification, SetOrientation(Orientation), SetStyle(Style), SetLanguage(i18n::Language),
     TogglePanel(i32, i32), ContextMenu(i32, i32), PanelUnavailable, Quit,
 }
 
@@ -211,6 +211,11 @@ fn monitor(
             match rx.recv_timeout(next_scan.saturating_duration_since(Instant::now())) {
                 Ok(Command::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Ok(Command::OpenWindow) => window_event(WindowEvent::Show),
+                Ok(Command::TestNotification) => {
+                    if let Err(error) = notifications::send_test(&session, appearance.language) {
+                        eprintln!("Battery Life: не удалось отправить тестовое уведомление: {error}");
+                    }
+                }
                 Ok(Command::TogglePanel(x, y)) => {
                     panel.send(panel::Message::Toggle(x, y));
                     break;

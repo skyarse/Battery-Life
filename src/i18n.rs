@@ -56,6 +56,8 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Нужны права доступа", "Access required"), ("Заряд недоступен", "Charge unavailable"),
     ("Не обнаружено", "Not detected"), ("Нет данных", "No data"),
     ("Низкий заряд", "Low battery"), ("низкий заряд", "low battery"),
+    ("Тестовое уведомление", "Test notification"),
+    ("Проверка уведомления и звука.", "Testing notifications and sound."),
     ("Заряжается", "Charging"), ("зарядка", "charging"),
     ("Отключено", "Disconnected"), ("отключено", "disconnected"), ("устарело", "stale"),
     ("Критический", "Critical"), ("Низкий", "Low"), ("Средний", "Medium"), ("Высокий", "High"), ("Полный", "Full"),
@@ -87,5 +89,7 @@ mod tests {
     fn translation_does_not_change_the_charge_value() {
         assert_eq!(Language::English.translate("отключено · ≈45%"), "disconnected · ≈45%");
         assert_eq!(Language::English.translate("Приблизительный уровень, сообщённый устройством"), "Approximate level reported by the device");
+        assert_eq!(Language::English.translate("Тестовое уведомление"), "Test notification");
+        assert_eq!(Language::English.translate("Проверка уведомления и звука."), "Testing notifications and sound.");
     }
 }

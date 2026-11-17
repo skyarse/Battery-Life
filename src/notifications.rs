@@ -50,21 +50,28 @@ impl LowBatteryAlerts {
 }
 
 fn send(session: &Connection, device: &Device) -> zbus::Result<()> {
+    let language = crate::tray_icon::Appearance::load().language;
+    send_notification(session, language, "Низкий заряд", &format!("{} — {}", device.name, device.label()))
+}
+
+pub fn send_test(session: &Connection, language: crate::i18n::Language) -> zbus::Result<()> {
+    send_notification(session, language, "Тестовое уведомление", "Проверка уведомления и звука.")
+}
+
+fn send_notification(session: &Connection, language: crate::i18n::Language, summary: &str, body: &str) -> zbus::Result<()> {
     let hints = HashMap::from([
         ("desktop-entry", Value::from("battery-life")),
         ("urgency", Value::from(1u8)),
         ("sound-name", Value::from("battery-low")),
     ]);
-    let language = crate::tray_icon::Appearance::load().language;
-    let body = language.translate(&format!("{} — {}", device.name, device.label()));
     session.call_method(
         Some("org.freedesktop.Notifications"),
         "/org/freedesktop/Notifications",
         Some("org.freedesktop.Notifications"),
         "Notify",
         &(
-            "Battery Life", 0u32, "battery-caution-symbolic", language.translate("Низкий заряд"),
-            body, Vec::<&str>::new(), hints, -1i32,
+            "Battery Life", 0u32, "battery-caution-symbolic", language.translate(summary),
+            language.translate(body), Vec::<&str>::new(), hints, -1i32,
         ),
     )?;
     Ok(())

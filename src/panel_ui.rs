@@ -28,6 +28,7 @@ slint::slint! {
         callback dismiss();
         callback quit();
         callback open-details();
+        callback test-notification();
         callback set-language(int);
         callback set-orientation(int);
         callback set-style(int);
@@ -125,6 +126,7 @@ slint::slint! {
                         current-index: root.english ? 1 : 0;
                         selected(value) => { root.set-language(self.current-index); }
                     }
+                    Button { text: root.english ? "Test notification" : "Тест уведомления"; clicked => { root.test-notification(); } }
                     Button { text: root.english ? "Open window" : "Открыть окно"; clicked => { root.open-details(); root.dismiss(); } }
                     }
                 }
@@ -143,6 +145,8 @@ pub fn create(
     panel.on_quit(move || { let _ = sender.send(Command::Quit); });
     let sender = tx.clone();
     panel.on_open_details(move || { let _ = sender.send(Command::OpenWindow); });
+    let sender = tx.clone();
+    panel.on_test_notification(move || { let _ = sender.send(Command::TestNotification); });
     let sender = tx.clone();
     panel.on_set_orientation(move |index| {
         if let Some((orientation, _)) = usize::try_from(index).ok().and_then(|i| Orientation::OPTIONS.get(i)) {
@@ -226,6 +230,10 @@ mod tests {
         click(230.0, 50.0);
         assert!(panel.get_settings());
         render();
+        panel.invoke_test_notification();
+        assert!(matches!(commands.try_recv(), Ok(Command::TestNotification)));
+        assert!(dismissed.try_recv().is_err());
+        assert!(panel.get_settings());
         panel.invoke_set_orientation(1);
         assert!(matches!(commands.try_recv(), Ok(Command::SetOrientation(Orientation::Left))));
         panel.invoke_set_style(0);
