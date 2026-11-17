@@ -53,6 +53,7 @@ fn send(session: &Connection, device: &Device) -> zbus::Result<()> {
     let hints = HashMap::from([
         ("desktop-entry", Value::from("battery-life")),
         ("urgency", Value::from(1u8)),
+        ("sound-name", Value::from("battery-low")),
     ]);
     let language = crate::tray_icon::Appearance::load().language;
     let body = language.translate(&format!("{} — {}", device.name, device.label()));
