@@ -1,8 +1,3 @@
-### Changed
+### Added
 
-- Reduced popup memory usage with panel-sized Wayland buffers and scanline rendering.
-
-### Fixed
-
-- Released popup drawing buffers when the menu closes.
-- Preserved popup and dropdown interaction during temporary keyboard focus transitions.
+- System low-battery sound for desktop notifications, respecting the desktop notification and sound settings.
