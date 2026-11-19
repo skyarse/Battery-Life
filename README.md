@@ -12,11 +12,9 @@ Only devices detected at least once appear in the list. Disconnected devices ret
 
 Tray warnings appear at 15% or below, or when a device reports a low or critical level. From v0.1.21, desktop notifications start at 25% or below; v0.1.20 uses 15%. Low or critical device-reported levels also trigger notifications. Reminders repeat approximately once per hour while fresh readings remain low. Charging or recovery above 25% resets the reminder timer from v0.1.21.
 
-Low-battery notifications request the system `battery-low` sound. Playback follows the desktop sound theme, notification volume, and Do Not Disturb settings; the sound is not played separately by Battery Life.
+Low-battery and test notifications use the bundled Warm signal. Playback follows desktop notification volume and Do Not Disturb settings; the sound is not played separately by Battery Life.
 
 Settings includes **Тест уведомления** (Test notification), which sends a localized test notification with the same sound request, even when no devices are connected. Testing does not change the low-battery reminder timer.
-
-Unreleased (`dev`): low-battery and test notifications use the bundled Warm signal (preview option 4) instead of the sound theme's `battery-low` event. Playback still follows desktop notification volume and Do Not Disturb settings.
 
 ## Running on Fedora KDE
 
