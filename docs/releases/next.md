@@ -1,3 +1,3 @@
-### Added
+### Changed
 
-- Test notification button in Settings to check desktop notifications and the low-battery sound without a connected device or changes to reminder timing.
+- Bundled the selected Warm signal for low-battery and test notifications, replacing the sound theme's battery alert while retaining desktop volume and Do Not Disturb behavior.

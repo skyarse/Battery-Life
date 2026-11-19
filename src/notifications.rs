@@ -1,5 +1,5 @@
 use crate::model::{Device, State};
-use std::{collections::HashMap, time::{Duration, Instant}};
+use std::{collections::HashMap, path::{Path, PathBuf}, time::{Duration, Instant}};
 use zbus::{blocking::Connection, zvariant::Value};
 
 const NOTIFICATION_PERCENT: u8 = 25;
@@ -59,11 +59,16 @@ pub fn send_test(session: &Connection, language: crate::i18n::Language) -> zbus:
 }
 
 fn send_notification(session: &Connection, language: crate::i18n::Language, summary: &str, body: &str) -> zbus::Result<()> {
-    let hints = HashMap::from([
+    let sound = sound_path();
+    let mut hints = HashMap::from([
         ("desktop-entry", Value::from("battery-life")),
         ("urgency", Value::from(1u8)),
-        ("sound-name", Value::from("battery-low")),
     ]);
+    if let Some(path) = sound.as_deref().and_then(Path::to_str) {
+        hints.insert("sound-file", Value::from(path));
+    } else {
+        eprintln!("Battery Life: файл звука уведомления не найден");
+    }
     session.call_method(
         Some("org.freedesktop.Notifications"),
         "/org/freedesktop/Notifications",
@@ -77,9 +82,30 @@ fn send_notification(session: &Connection, language: crate::i18n::Language, summ
     Ok(())
 }
 
+fn sound_path() -> Option<PathBuf> {
+    let installed = std::env::current_exe().ok()
+        .and_then(|exe| exe.parent()?.join("../share/battery-life/sounds/low-battery.wav").canonicalize().ok());
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("packaging/sounds/low-battery.wav");
+    installed.or(Some(source)).filter(|path| path.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_notification_sound_is_a_short_pcm_wave() {
+        let bytes = std::fs::read(sound_path().expect("notification sound must be bundled")).unwrap();
+        assert_eq!(&bytes[..4], b"RIFF");
+        assert_eq!(&bytes[8..16], b"WAVEfmt ");
+        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 1);
+        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 16);
+        let sample_rate = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+        let duration = (bytes.len() - 44) as f64 / (sample_rate as f64 * 2.0);
+        assert!((0.1..1.0).contains(&duration));
+        assert!(bytes[44..].iter().any(|byte| *byte != 0));
+    }
 
     #[test]
     fn alerts_start_at_twenty_five_without_repeating_on_each_poll() {

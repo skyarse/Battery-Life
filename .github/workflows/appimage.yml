@@ -75,6 +75,7 @@ jobs:
           install -Dm755 packaging/AppRun AppDir/AppRun
           install -Dm644 packaging/battery-life.desktop AppDir/battery-life.desktop
           install -Dm644 packaging/battery-life.svg AppDir/battery-life.svg
+          install -Dm644 packaging/sounds/low-battery.wav AppDir/usr/share/battery-life/sounds/low-battery.wav
           install -Dm644 -t AppDir/usr/share/battery-life/icons/hicolor/scalable/status packaging/tray-icons/hicolor/scalable/status/*.svg
           install -Dm644 LICENSE AppDir/usr/share/doc/battery-life/LICENSE
           ln -s battery-life.svg AppDir/.DirIcon
@@ -98,6 +99,8 @@ jobs:
           )
           test "$("$appimage" --version)" = "$version"
           test "$(env -u APPIMAGE_EXTRACT_AND_RUN "$appimage" --appimage-updateinformation)" = "$update_info"
+          (cd "$RUNNER_TEMP" && env -u APPIMAGE_EXTRACT_AND_RUN "$GITHUB_WORKSPACE/$appimage" --appimage-extract usr/share/battery-life/sounds/low-battery.wav)
+          cmp packaging/sounds/low-battery.wav "$RUNNER_TEMP/squashfs-root/usr/share/battery-life/sounds/low-battery.wav"
           appimage_sha1=$(sha1sum "$appimage" | cut -d ' ' -f 1)
           grep -aFxq "URL: $file_url" "$appimage.zsync"
           grep -aFxq "SHA-1: $appimage_sha1" "$appimage.zsync"
