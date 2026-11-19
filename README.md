@@ -16,6 +16,8 @@ Low-battery notifications request the system `battery-low` sound. Playback follo
 
 Settings includes **Тест уведомления** (Test notification), which sends a localized test notification with the same sound request, even when no devices are connected. Testing does not change the low-battery reminder timer.
 
+Unreleased (`dev`): low-battery and test notifications use the bundled Warm signal (preview option 4) instead of the sound theme's `battery-low` event. Playback still follows desktop notification volume and Do Not Disturb settings.
+
 ## Running on Fedora KDE
 
 1. Download **Battery-Life-x86_64.AppImage** from the [latest release](https://github.com/skyarse/Battery-Life/releases/latest).
