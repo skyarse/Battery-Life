@@ -1,3 +1,3 @@
-### Changed
+### Fixed
 
-- Bundled the selected Warm signal for low-battery and test notifications, replacing the sound theme's battery alert while retaining desktop volume and Do Not Disturb behavior.
+- Low-battery notifications sent at least an hour apart per device, even when charge readings fluctuate or charging starts and stops.

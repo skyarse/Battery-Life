@@ -26,14 +26,6 @@ impl LowBatteryAlerts {
                 continue;
             }
 
-            // Keep the reminder timer through small fluctuations near the threshold.
-            let recovered = device.charging == Some(true)
-                || device.percent.is_some_and(|percent| percent > NOTIFICATION_PERCENT)
-                || matches!(device.level.as_deref(), Some("Средний" | "Высокий" | "Полный"));
-            if recovered {
-                self.last_notified.remove(&device.id);
-            }
-
             let due = self.last_notified.get(&device.id)
                 .is_none_or(|last| now.saturating_duration_since(*last) >= REMINDER_INTERVAL);
             let low = device.charging != Some(true)
@@ -108,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn alerts_start_at_twenty_five_without_repeating_on_each_poll() {
+    fn alerts_start_at_twenty_five_and_keep_the_interval_across_threshold_fluctuations() {
         let mut alerts = LowBatteryAlerts::default();
         let mut device = Device::new("mouse", "Mouse", "");
         let start = Instant::now();
@@ -118,12 +110,14 @@ mod tests {
             (1, 25, false, State::Stale, 0),
             (2, 25, true, State::Ready, 0),
             (3, 25, false, State::Ready, 1),
-            (4, 25, false, State::Ready, 1),
-            (5, 24, false, State::Ready, 1),
+            (60, 26, false, State::Ready, 1),
+            (120, 25, false, State::Ready, 1),
+            (150, 30, false, State::Ready, 1),
+            (180, 24, false, State::Ready, 1),
             (3602, 25, false, State::Ready, 1),
             (3603, 25, false, State::Ready, 2),
             (3604, 26, false, State::Ready, 2),
-            (3605, 25, false, State::Ready, 3),
+            (3605, 25, false, State::Ready, 2),
         ] {
             device.reading(Some(percent), None, Some(charging), false, "test");
             device.state = state;
@@ -139,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn reminders_repeat_hourly_with_fresh_readings_and_reset_after_charging() {
+    fn charging_and_unavailable_readings_keep_the_hourly_interval() {
         let mut alerts = LowBatteryAlerts::default();
         let mut device = Device::new("mouse", "Mouse", "");
         let start = Instant::now();
@@ -148,13 +142,16 @@ mod tests {
             (0, 15, false, State::Stale, 0),
             (1, 15, false, State::Ready, 1),
             (2, 15, false, State::Missing, 1),
-            (3, 20, false, State::Ready, 1),
+            (60, 15, true, State::Ready, 1),
+            (120, 20, false, State::Ready, 1),
             (3600, 15, false, State::Ready, 1),
             (3601, 15, false, State::Stale, 1),
             (3602, 15, false, State::Ready, 2),
             (3603, 15, false, State::Ready, 2),
             (3604, 15, true, State::Ready, 2),
-            (3605, 15, false, State::Ready, 3),
+            (3605, 15, false, State::Ready, 2),
+            (7202, 15, true, State::Ready, 2),
+            (7203, 15, false, State::Ready, 3),
         ] {
             device.reading(Some(percent), None, Some(charging), false, "test");
             device.state = state;

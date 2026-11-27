@@ -10,7 +10,7 @@ Devices are checked automatically every 30 seconds. Battery Life supports dedica
 
 Only devices detected at least once appear in the list. Disconnected devices retain their last known charge, marked as disconnected. If a receiver is present but the device does not respond, the saved reading is marked as stale. History persists in `$XDG_STATE_HOME/battery-life/devices.json`, which defaults to `~/.local/state/battery-life/devices.json`.
 
-Tray warnings appear at 15% or below, or when a device reports a low or critical level. From v0.1.21, desktop notifications start at 25% or below; v0.1.20 uses 15%. Low or critical device-reported levels also trigger notifications. Reminders repeat approximately once per hour while fresh readings remain low. Charging or recovery above 25% resets the reminder timer from v0.1.21.
+Tray warnings appear at 15% or below, or when a device reports a low or critical level. These levels also trigger desktop notifications, which start at 25% or below for percentage readings. While Battery Life is running, automatic notifications for each device are at least one hour apart, even when the charge rises above 25% or charging starts and stops.
 
 Low-battery and test notifications use the bundled Warm signal. Playback follows desktop notification volume and Do Not Disturb settings; the sound is not played separately by Battery Life.
 
